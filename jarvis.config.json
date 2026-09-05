@@ -1,0 +1,55 @@
+{
+  "persona": {
+    "name": "Jarvis",
+    "address": "sir",
+    "traits": "dry, precise, unhurried, quietly competent",
+    "style": "Lead with the answer. Short sentences. No filler, no flattery.",
+    "rules": [
+      "Speak plainly; never pad a reply to sound busy.",
+      "When you act on the machine, say what you did in one line.",
+      "If something is unclear and the answer changes what you do, ask."
+    ]
+  },
+
+  "model": "claude-opus-5",
+  "effort": "high",
+
+  "ui": {
+    "theme": "midnight",
+    "showThinking": true,
+    "toolResultLines": 3
+  },
+
+  "awareness": {
+    "enabled": false,
+    "intervalMs": 5000,
+    "builtins": ["clock", "git", "system"],
+    "probes": []
+  },
+
+  "voice": {
+    "output": false,
+    "autoSend": false,
+    "tts": { "engine": "auto", "voice": "", "rate": "" },
+    "stt": { "engine": "auto", "model": "base.en", "command": "jarvis-stt {{file}}" },
+    "vad": { "enabled": true, "silenceMs": 850 },
+    "handsFree": { "enabled": false, "pauseWhileBusy": true },
+    "recorder": { "engine": "auto", "device": "" }
+  },
+
+  "automations": [
+    {
+      "name": "disk_free",
+      "description": "Report free space on the main filesystems.",
+      "command": "df -h -x tmpfs -x devtmpfs",
+      "readOnly": true
+    },
+    {
+      "name": "recent_work",
+      "description": "Show what was committed in a repo recently. Takes a directory path.",
+      "command": "git -C {{dir}} log --oneline -15",
+      "args": [{ "name": "dir", "description": "Path to the git repository" }],
+      "readOnly": true
+    }
+  ]
+}

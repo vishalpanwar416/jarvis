@@ -1,0 +1,36 @@
+{
+  "name": "mono",
+  "extends": "midnight",
+  "colors": {
+    "accent": "white",
+    "banner": "white",
+    "assistant": "white",
+    "user": "cyan",
+    "thinking": "gray",
+    "tool": "white",
+    "toolArg": "gray",
+    "code": "gray",
+    "ok": "green",
+    "err": "red",
+    "warn": "yellow",
+    "dim": "gray",
+    "border": "gray"
+  },
+  "glyphs": {
+    "user": ">",
+    "tool": "*",
+    "ok": "v",
+    "err": "x",
+    "thinking": "~",
+    "mic": "o",
+    "bullet": "-",
+    "spinner": ["-", "\\", "|", "/"]
+  },
+  "layout": {
+    "borderStyle": "classic",
+    "showBanner": false,
+    "compact": true,
+    "awarenessPosition": "bottom"
+  },
+  "banner": []
+}

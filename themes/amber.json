@@ -1,0 +1,36 @@
+{
+  "name": "amber",
+  "extends": "midnight",
+  "colors": {
+    "accent": "#ffb000",
+    "banner": "#ff8c00",
+    "assistant": "#ffcc66",
+    "user": "#ffffff",
+    "thinking": "#8a5a00",
+    "tool": "#ff8c00",
+    "toolArg": "#c9821b",
+    "code": "#ffd899",
+    "ok": "#b5e853",
+    "err": "#ff5f56",
+    "warn": "#ffb000",
+    "dim": "#8a5a00",
+    "border": "#5c3d00"
+  },
+  "glyphs": {
+    "user": "▸",
+    "tool": "▪",
+    "ok": "+",
+    "err": "!",
+    "bullet": "·",
+    "spinner": ["▁", "▃", "▄", "▅", "▆", "▇", "▆", "▅", "▄", "▃"]
+  },
+  "layout": {
+    "borderStyle": "single",
+    "awarenessPosition": "top"
+  },
+  "banner": [
+    " ┌─────────────────────────┐",
+    " │  J A R V I S   ONLINE   │",
+    " └─────────────────────────┘"
+  ]
+}
