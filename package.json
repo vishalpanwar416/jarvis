@@ -1,14 +1,47 @@
 {
-  "name": "jarvis",
+  "name": "jarvis-code",
   "version": "1.0.0",
   "description": "A hackable terminal assistant built on the Claude Agent SDK",
-  "type": "module",
-  "bin": {
-    "jarvis": "bin/jarvis.mjs"
+  "keywords": [
+    "claude",
+    "claude-agent-sdk",
+    "agent",
+    "cli",
+    "terminal",
+    "assistant",
+    "ollama",
+    "offline",
+    "local-llm"
+  ],
+  "license": "MIT",
+  "author": "Vishal Panwar",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vishalpanwar416/jarvis.git"
   },
+  "homepage": "https://github.com/vishalpanwar416/jarvis#readme",
+  "bugs": "https://github.com/vishalpanwar416/jarvis/issues",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "jarvis": "bin/jarvis.mjs",
+    "jarvis-code": "bin/jarvis.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "themes",
+    "build.mjs",
+    "jarvis.config.json",
+    "local-llm.config.yaml",
+    ".cache/ui.mjs"
+  ],
   "scripts": {
     "start": "node bin/jarvis.mjs",
-    "build": "node build.mjs --force"
+    "build": "node build.mjs --force",
+    "prepublishOnly": "node build.mjs --force"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.261",

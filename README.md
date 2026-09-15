@@ -9,10 +9,30 @@ jarvis "fix the tests"    # one task, then exit
 jarvis --help
 ```
 
-Install it on your PATH once:
+## Install
+
+Try it without installing anything:
 
 ```bash
-cd ~/Development/Aarambh/jarvis && npm link
+npx jarvis-code
+```
+
+Or put it on your PATH:
+
+```bash
+npm install -g jarvis-code
+```
+
+Either way you need Node 20+ and the same Claude credentials Claude Code uses —
+a subscription login or `ANTHROPIC_API_KEY`. (`--local` needs neither; see
+below.)
+
+To change it rather than just use it, clone instead — the UI recompiles on
+launch, so editing a `.jsx` and re-running `jarvis` is the whole loop:
+
+```bash
+git clone https://github.com/vishalpanwar416/jarvis
+cd jarvis && npm install && npm link
 ```
 
 ## The three files you'll actually edit
@@ -130,7 +150,9 @@ six minutes. After that Ollama reuses its KV cache and only reads what you
 appended, so later turns cost roughly 15-25s plus generation at ~5 tokens/sec.
 Keep tasks short and specific; this is for a train, not for refactoring.
 
-Swap the model by editing `model:` in `local-llm.config.yaml`; the next
+Swap the model by editing `model:` in `local-llm.config.yaml` — or, if you
+installed from npm and would rather not edit a file inside `node_modules`, copy
+it to `~/.jarvis/local-llm.config.yaml`, which wins whenever it exists. The next
 `--local` notices the file changed and restarts the proxy, because a running
 one would go on serving the old model without saying so (the name it
 advertises, `local`, does not change). A proxy you started by hand is left

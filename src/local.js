@@ -21,7 +21,13 @@ export const LOCAL_MODEL = 'local';           // the model_name in the yaml
 const HOME = process.env.HOME ?? '';
 const STATE_DIR = process.env.JARVIS_LOCAL_DIR || path.join(HOME, '.local/share/jarvis-local');
 const LITELLM = path.join(STATE_DIR, 'venv/bin/litellm');
-const CONFIG = path.join(REPO_ROOT, 'local-llm.config.yaml');
+// Installed from npm, REPO_ROOT is inside node_modules — no place to keep the
+// model you chose. So ~/.jarvis/local-llm.config.yaml wins when it exists.
+// It is never written for you: seeding it would mean a clone's own yaml was
+// silently ignored, which is the exact failure stopIfStale exists to prevent.
+const PACKAGED_CONFIG = path.join(REPO_ROOT, 'local-llm.config.yaml');
+const USER_CONFIG = path.join(HOME, '.jarvis', 'local-llm.config.yaml');
+const CONFIG = fs.existsSync(USER_CONFIG) ? USER_CONFIG : PACKAGED_CONFIG;
 const LOG = path.join(STATE_DIR, 'proxy.log');
 const STAMP = path.join(STATE_DIR, 'proxy.json');   // {pid, configHash} of the proxy we started
 const PORT = Number(process.env.JARVIS_LOCAL_PORT || 4000);
@@ -178,7 +184,7 @@ export async function enableLocalModel({ log = () => {} } = {}) {
   // old model without saying so.
   const stale = stopIfStale();
   if (stale) {
-    log('local-llm.config.yaml changed — restarting the proxy …');
+    log(`${CONFIG} changed — restarting the proxy …`);
     const until = Date.now() + 15_000;
     while (Date.now() < until && (await reachable(`${BASE_URL}/health/liveliness`)))
       await sleep(300);           // wait for it to let go of the port
