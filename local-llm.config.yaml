@@ -1,0 +1,39 @@
+# LiteLLM proxy config for `jarvis --local` (see src/local.js).
+#
+# The Agent SDK speaks Anthropic's /v1/messages; Ollama speaks OpenAI's
+# /v1/chat/completions. LiteLLM sits between them and translates, so the whole
+# Claude Code harness runs against a model on this laptop with no network.
+#
+# Start it by hand with:
+#   ~/.local/share/jarvis-local/venv/bin/litellm --config local-llm.config.yaml
+
+model_list:
+  # One name, "local", so nothing downstream has to know which model is behind
+  # it. Swap the model: line to move jarvis onto a different Ollama model.
+  # ollama_chat/ (not ollama/) is the chat-tuned path: it sends the messages
+  # array through Ollama's /api/chat and handles tool calls.
+  - model_name: local
+    litellm_params:
+      model: ollama_chat/qwen3.5:9b
+      api_base: http://127.0.0.1:11434
+      # qwen3.5 is a thinking model. At ~5 tokens/sec a reasoning pass costs
+      # minutes, and on the harness's small internal calls it consumed the
+      # whole max_tokens budget and returned a thinking block with no answer.
+      think: false
+      # Ollama defaults to a 4096-token context and silently truncates beyond
+      # it. The Claude Code system prompt and tool definitions alone exceed
+      # that, so the default threw away the actual conversation and the model
+      # answered a question nobody asked. The model itself supports 262144;
+      # this is the ceiling the KV cache comfortably fits in RAM here.
+      num_ctx: 32768
+
+litellm_settings:
+  # The harness sends Anthropic-only parameters (thinking, effort, betas,
+  # cache_control). Ollama rejects unknown fields, so drop them here rather
+  # than have every request 400.
+  drop_params: true
+
+general_settings:
+  # Local-only listener, but the SDK insists on sending some credential, so
+  # give it one to send. Not a secret; the proxy is bound to 127.0.0.1.
+  master_key: sk-jarvis-local

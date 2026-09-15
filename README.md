@@ -102,6 +102,44 @@ accepted as-is so a model released tomorrow still works. Edit the list in
 
 Any command can open the same picker with `api.pick({ title, hint, items, onSelect })`.
 
+## Offline — `jarvis --local`
+
+`jarvis --local` runs the whole agent against a model on this machine, with the
+network unplugged. Nothing about the harness changes: same tools, same
+permissions, same UI.
+
+It works because we never pass an `env` option to `query()`, so the Claude Code
+subprocess inherits this process's environment — and it honours
+`ANTHROPIC_BASE_URL`. `src/local.js` sets that (plus the model aliases, so the
+agent's internal "small fast model" calls stay local too) before the session
+starts. At that URL sits a LiteLLM proxy translating Anthropic's `/v1/messages`
+into what Ollama speaks; `local-llm.config.yaml` is its config. The proxy is
+started on demand and left running, so the next `--local` reuses it.
+
+One-time install, **while you still have network**:
+
+```bash
+python3 -m venv ~/.local/share/jarvis-local/venv
+~/.local/share/jarvis-local/venv/bin/pip install "litellm[proxy]"
+ollama pull qwen3.5:9b
+```
+
+Expect it to be slow, and slow in a lopsided way. The first turn pays for the
+harness's ~17k-token system prompt at about 50 tokens/sec, so it takes five to
+six minutes. After that Ollama reuses its KV cache and only reads what you
+appended, so later turns cost roughly 15-25s plus generation at ~5 tokens/sec.
+Keep tasks short and specific; this is for a train, not for refactoring.
+
+Swap the model by editing `model:` in `local-llm.config.yaml`; the next
+`--local` notices the file changed and restarts the proxy, because a running
+one would go on serving the old model without saying so (the name it
+advertises, `local`, does not change). A proxy you started by hand is left
+alone. Two settings in that file are load-bearing: `num_ctx` (Ollama defaults to 4096 and *silently
+truncates*, which throws away the system prompt and makes the agent answer a
+question nobody asked) and `think: false` (a reasoning pass costs minutes at
+this speed, and on small internal calls it ate the entire token budget and
+returned no answer).
+
 ## Permissions
 
 Read-only tools are pre-approved in `allowedTools`. Anything else pauses with a

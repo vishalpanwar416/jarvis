@@ -14,6 +14,8 @@ jarvis — a terminal assistant you can rebuild
 
 options
   -m, --model <name>        model to use (default from jarvis.config.json)
+      --local               run against the model on this machine (no network);
+                            starts the Ollama proxy if it isn't already up
       --effort <level>      low | medium | high | xhigh | max
   -C, --cwd <dir>           working directory for the agent
       --theme <name>        ${listThemes().join(' | ')}
@@ -42,6 +44,7 @@ function parseArgs(argv) {
     switch (arg) {
       case '-h': case '--help': flags.help = true; break;
       case '-m': case '--model': flags.model = take(); break;
+      case '--local': flags.local = true; break;
       case '--effort': flags.effort = take(); break;
       case '-C': case '--cwd': flags.cwd = take(); break;
       case '--theme': flags.theme = take(); break;
@@ -72,6 +75,21 @@ async function main() {
   if (flags.help) {
     process.stdout.write(HELP);
     return;
+  }
+
+  // Must happen before the session starts: the Agent SDK spawns Claude Code as
+  // a subprocess that inherits this process's environment, and that is how the
+  // local endpoint reaches it.
+  if (flags.local) {
+    const { enableLocalModel, LOCAL_MODEL } = await import('../src/local.js');
+    try {
+      const where = await enableLocalModel({ log: (line) => process.stderr.write(`${line}\n`) });
+      if (!flags.quiet) process.stderr.write(`jarvis: local model — ${where}\n`);
+    } catch (error) {
+      process.stderr.write(`jarvis --local: ${error.message}\n`);
+      process.exit(2);
+    }
+    if (!flags.model) flags.model = LOCAL_MODEL;
   }
 
   const overrides = {};
