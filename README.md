@@ -257,7 +257,8 @@ faked — if a backend is missing the status line says which one.
 - **Speaking** (`ctrl+o`): `piper` → `espeak-ng` → `say` → `spd-say`.
 - **Listening** (`ctrl+t`): a recorder (`arecord` → `pw-record` → `rec`) plus a
   transcriber — `jarvis-stt-stream` if it's on PATH, else `whisper-cpp` →
-  `whisper` → `voice.stt.command`.
+  `whisper`. Setting `voice.stt.command` skips that detection entirely, and
+  `voice.tts.command` does the same for speaking.
 
 ### Dictation
 

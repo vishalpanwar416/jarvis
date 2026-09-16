@@ -127,6 +127,10 @@ export default function App({ config: initialConfig, resume }) {
 
         case 'submitted':
           turnStart.current = Date.now();
+          // Forget the last turn's words: a turn that ends in tool calls with
+          // nothing to say would otherwise reach 'result' still holding them,
+          // and speech out would read the previous answer a second time.
+          lastReply.current = '';
           setBusy(true);
           setLive({ text: '', thinking: '' });
           break;

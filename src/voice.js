@@ -5,11 +5,14 @@
 // one and stays text-only rather than silently doing nothing.
 //
 //   speech out (TTS): piper → espeak-ng → say → spd-say
-//   speech in  (STT): whisper-cpp → whisper → custom command
+//   speech in  (STT): whisper-cpp → whisper
 //   recording:        arecord → pw-record → rec (sox)
 //
-// Pin any of them in jarvis.config.json, or set a `command` template to use a
-// backend that isn't listed. Templates understand {{file}}, {{text}}, {{model}}.
+// Pin any of them in jarvis.config.json — to a name on its own list; anything
+// else is refused with a message saying so, because the command lines below are
+// written one per name. A `command` template wins over the chain entirely, and
+// is how you use a backend that isn't listed at all. Templates understand
+// {{file}}, {{text}}, {{model}}.
 //
 // Speech in comes in two shapes. The file backend above transcribes a take once
 // it's over. A *streaming* backend (voice.stt.streamCommand, `jarvis-stt-stream`
@@ -33,17 +36,31 @@ function has(binary) {
   }
 }
 
-function pick(preferred, chain) {
-  if (preferred && preferred !== 'auto') return preferred;
+// These chains are exhaustive, not merely preferred: the command lines further
+// down are written one per name, so an engine outside a chain can never be
+// turned into one. A pinned name we don't recognise is therefore refused here
+// rather than carried along and crashed on at the first keypress — and
+// remembered, so the UI can blame the config instead of an empty PATH.
+export const TTS_ENGINES = ['piper', 'espeak-ng', 'say', 'spd-say'];
+export const STT_ENGINES = ['whisper-cpp', 'whisper'];
+export const RECORDERS = ['arecord', 'pw-record', 'rec'];
+
+function pick(preferred, chain, unsupported, key) {
+  if (preferred && preferred !== 'auto') {
+    if (chain.includes(preferred)) return preferred;
+    unsupported[key] = preferred;
+    return null;
+  }
   return chain.find(has) ?? null;
 }
 
 export function detectBackends(config) {
   const voice = config.voice;
   const streamCommand = voice.stt.streamCommand ?? '';
+  const unsupported = {};
   return {
-    tts: voice.tts.command ? 'command' : pick(voice.tts.engine, ['piper', 'espeak-ng', 'say', 'spd-say']),
-    stt: voice.stt.command ? 'command' : pick(voice.stt.engine, ['whisper-cpp', 'whisper']),
+    tts: voice.tts.command ? 'command' : pick(voice.tts.engine, TTS_ENGINES, unsupported, 'tts'),
+    stt: voice.stt.command ? 'command' : pick(voice.stt.engine, STT_ENGINES, unsupported, 'stt'),
     // A configured stream command is trusted as-is; the default is only used if
     // it's actually on PATH, so nothing claims live dictation it can't do.
     stream: streamCommand
@@ -51,12 +68,33 @@ export function detectBackends(config) {
       : voice.stt.streaming === false || !has('jarvis-stt-stream')
         ? null
         : 'jarvis-stt-stream',
-    recorder: pick(voice.recorder.engine, ['arecord', 'pw-record', 'rec']),
+    recorder: pick(voice.recorder.engine, RECORDERS, unsupported, 'recorder'),
+    // Engines named in the config that no chain knows, so the blockers below
+    // can name the offending setting.
+    unsupported,
   };
 }
 
 function template(string, vars) {
   return string.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, key) => vars[key] ?? '');
+}
+
+// Waits for a child to be gone. A process that has already exited fires no
+// second event, and one that ignores the signal fires none at all — either way
+// an unguarded wait would hold a keystroke forever, so both are bounded here.
+function exited(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      child.off('exit', done);
+      resolve();
+    }, timeoutMs);
+    child.once('exit', done);
+  });
 }
 
 // Speech synthesizers choke on markdown; strip it down to prose.
@@ -190,15 +228,23 @@ export class Voice {
     return Boolean(this.mic);
   }
 
-  // Why listening is unavailable, in a sentence fit for the status line.
+  // Why listening is unavailable, in a sentence fit for the status line. A name
+  // we don't know is reported as the config mistake it is, rather than as a
+  // missing install the user would go looking for and never find.
   listenBlocker() {
     if (this.canListen) return null;
+    const bad = this.backends.unsupported;
+    if (bad.recorder) return `voice.recorder.engine "${bad.recorder}" is not one of ${RECORDERS.join(', ')}`;
     if (!this.backends.recorder) return 'no recorder on PATH (install alsa-utils for arecord)';
+    if (bad.stt) return `voice.stt.engine "${bad.stt}" is not one of ${STT_ENGINES.join(', ')} (or set voice.stt.command)`;
     return 'no speech-to-text backend (install whisper.cpp, or set voice.stt.command)';
   }
 
   speakBlocker() {
-    return this.canSpeak ? null : 'no speech synthesizer on PATH (install piper or espeak-ng)';
+    if (this.canSpeak) return null;
+    const bad = this.backends.unsupported.tts;
+    if (bad) return `voice.tts.engine "${bad}" is not one of ${TTS_ENGINES.join(', ')}`;
+    return 'no speech synthesizer on PATH (install piper or espeak-ng)';
   }
 
   // ── output ────────────────────────────────────────────────────────────────
@@ -316,7 +362,7 @@ export class Voice {
     const { child, file } = this.recording;
     this.recording = null;
     child.kill('SIGINT');
-    await new Promise((resolve) => child.on('exit', resolve));
+    await exited(child, 3000);
 
     if (!fs.existsSync(file) || fs.statSync(file).size < 4096) {
       throw new Error('nothing recorded');
@@ -490,8 +536,12 @@ export class Voice {
         resolve((text ?? '').trim());
       };
       take.resolveFinal = finish;
+      // Control words go down fd 3, so fd 3 is the descriptor to test: stdin
+      // can be perfectly writable while the transcriber has closed its control
+      // channel, and the write would then throw out of this promise.
       const flush = () => {
-        if (stream.child.stdin.writable) stream.child.stdio[3].write('flush\n');
+        const control = stream.child.stdio[3];
+        if (control?.writable) control.write('flush\n');
         else finish(take.text);
       };
       // The tail of a take still has to be transcribed, so the answer lags the
@@ -628,7 +678,8 @@ export class Voice {
     if (!take) return;
     this.take = null;
     if (take.owned) take.recorder.kill('SIGINT');
-    if (this.stream?.child.stdin.writable) this.stream.child.stdio[3].write('reset\n');
+    const control = this.stream?.child.stdio[3];
+    if (control?.writable) control.write('reset\n');
     if (this.mic) {
       this.mic.detector.reset();
       this.#clearPreRoll(this.mic);

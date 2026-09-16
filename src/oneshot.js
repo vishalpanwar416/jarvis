@@ -57,6 +57,21 @@ export async function runOnce(prompt, { config, resume, yes = false, quiet = fal
   });
 
   return new Promise((resolve) => {
+    // Every exit runs through here. A session can end without ever producing a
+    // result — a CLI that won't launch, credentials the API rejects, a dead
+    // --local proxy — and the SDK reports that as an error followed by the
+    // stream closing. Leaving this promise unsettled then fails in whichever
+    // way is worse: the run hangs if anything still holds the event loop open,
+    // and otherwise Node drains and exits 0, reporting success for a run that
+    // produced nothing. A cron job deserves better than either.
+    let settled = false;
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      session.close();
+      resolve(code);
+    };
+
     session.on('event', (event) => {
       switch (event.kind) {
         case 'tool-start':
@@ -79,6 +94,12 @@ export async function runOnce(prompt, { config, resume, yes = false, quiet = fal
           process.stderr.write(`${paint('err', `${theme.glyphs.err} ${event.text}`)}\n`);
           break;
 
+        // The stream ended. A result would already have settled this, so
+        // reaching here means the run ended without one: failure.
+        case 'closed':
+          finish(1);
+          break;
+
         case 'result': {
           const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = event.totals;
           const totalIn = inputTokens + cacheReadTokens + cacheWriteTokens;
@@ -90,8 +111,7 @@ export async function runOnce(prompt, { config, resume, yes = false, quiet = fal
             ),
           );
           if (voice) voice.speak(event.text || '');
-          session.close();
-          resolve(event.isError ? 1 : 0);
+          finish(event.isError ? 1 : 0);
           break;
         }
 

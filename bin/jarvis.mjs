@@ -39,7 +39,15 @@ function parseArgs(argv) {
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    const take = () => argv[++index];
+    // A flag whose value is missing used to read as undefined and then fall
+    // through every `if (flags.x)` below, so `jarvis --theme` — or a value you
+    // meant to type and didn't — ran silently on the defaults. None of these
+    // options take a value that begins with a dash, so that's a miss too.
+    const take = () => {
+      const value = argv[++index];
+      if (value === undefined || value.startsWith('-')) throw new Error(`${arg} needs a value`);
+      return value;
+    };
 
     switch (arg) {
       case '-h': case '--help': flags.help = true; break;

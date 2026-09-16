@@ -4,6 +4,17 @@ import { listThemes } from './config.js';
 import { findAutomation, execute } from './automations.js';
 import { listModels, resolveModel, describeModel } from './models.js';
 
+// `on` and `off` are the only words these take; bare toggles. Anything else is
+// a typo, and reading it as "off" — which `arg === 'on'` quietly does — turns a
+// feature off while looking for all the world like it obeyed you.
+function toggleArg(arg, current) {
+  if (!arg) return !current;
+  const word = arg.toLowerCase();
+  if (word === 'on') return true;
+  if (word === 'off') return false;
+  return null;
+}
+
 export const COMMANDS = {
   help: {
     help: 'show this list',
@@ -28,7 +39,8 @@ export const COMMANDS = {
     run: ([arg], api) => {
       const blocker = api.voice.speakBlocker();
       if (blocker) return api.error(`speech out unavailable: ${blocker}`);
-      const next = arg ? arg === 'on' : !api.state.voiceOut;
+      const next = toggleArg(arg, api.state.voiceOut);
+      if (next === null) return api.error(`usage: /voice on|off (bare toggles) — got "${arg}"`);
       api.setVoiceOut(next);
       api.note(`speech out ${next ? 'on' : 'off'}`);
     },
@@ -42,7 +54,8 @@ export const COMMANDS = {
       const { recorder, stream, stt } = api.voice.backends;
 
       if (arg) {
-        const next = arg === 'on';
+        const next = toggleArg(arg, api.state.handsFree);
+        if (next === null) return api.error(`usage: /listen on|off (bare reports) — got "${arg}"`);
         if (next && !api.voice.canHandsFree) {
           return api.error('hands-free needs a streaming transcriber and voice.vad.enabled');
         }
@@ -72,7 +85,8 @@ export const COMMANDS = {
   autopilot: {
     help: 'answer every prompt, question and picker yourself: on|off (bare toggles)',
     run: ([arg], api) => {
-      const next = arg ? arg === 'on' : !api.state.autopilot;
+      const next = toggleArg(arg, api.state.autopilot);
+      if (next === null) return api.error(`usage: /autopilot on|off (bare toggles) — got "${arg}"`);
       api.setAutopilot(next);
       api.note(next ? 'autopilot on — every prompt, question and picker answers itself · ctrl+p to disarm' : 'autopilot off');
     },
@@ -81,7 +95,8 @@ export const COMMANDS = {
   awareness: {
     help: 'ambient panel on|off (bare toggles)',
     run: ([arg], api) => {
-      const next = arg ? arg === 'on' : !api.state.awareness;
+      const next = toggleArg(arg, api.state.awareness);
+      if (next === null) return api.error(`usage: /awareness on|off (bare toggles) — got "${arg}"`);
       api.setAwareness(next);
       api.note(`awareness ${next ? 'on' : 'off'}`);
     },

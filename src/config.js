@@ -162,11 +162,20 @@ export function listThemes() {
   return [...names].sort();
 }
 
-export function loadTheme(name) {
+export function loadTheme(name, seen = []) {
   const file = themePath(name) ?? themePath('midnight');
   if (!file) throw new Error(`no theme found for "${name}" and no midnight fallback in themes/`);
+  // A theme that extends itself — directly, or round a ring of three — would
+  // recurse until the stack gave out, at launch, with nothing on screen to say
+  // why. Themes are the file people are invited to edit, so name the loop.
+  if (seen.includes(file)) {
+    const ring = [...seen, file].map((entry) => path.basename(entry, '.json')).join(' → ');
+    throw new Error(`theme "${name}" extends itself: ${ring}`);
+  }
   const theme = readJson(file);
   // A theme may extend another so you only override the few keys you care about.
-  if (theme.extends) return merge(loadTheme(theme.extends), { ...theme, extends: undefined });
+  if (theme.extends) {
+    return merge(loadTheme(theme.extends, [...seen, file]), { ...theme, extends: undefined });
+  }
   return theme;
 }
