@@ -4,6 +4,7 @@ import { autopilotPersona, autopilotPrefix } from './autopilot.js';
 import { memoryBlock } from './memory.js';
 import { workingSetBlock } from './working-set.js';
 import { recallBlock } from './recall.js';
+import { capabilityBlock } from './capabilities.js';
 
 export function buildPersona(config) {
   const { name, address, traits, style, rules } = config.persona;
@@ -27,6 +28,11 @@ export function buildPersona(config) {
 
   if (config.autopilot) lines.push('', autopilotPersona());
   if (config.askFirst) lines.push('', askFirstPersona());
+
+  // What this machine can do, before what is known about the work on it.
+  // It is the most fixed thing in the prompt — a desktop does not grow a
+  // synthesizer mid-conversation — so it sits above anything that moves.
+  lines.push('', capabilityBlock(config));
 
   if (config.memory !== false) {
     // Where the work is, before what is known about it. The smallest and
