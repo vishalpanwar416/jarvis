@@ -5,7 +5,7 @@
 // API gets managed instead of used.
 import { z } from 'zod';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
-import { remember, forget, loadIndex, findProjects } from './memory.js';
+import { remember, forget, loadIndex, findProjects, KINDS } from './memory.js';
 import { forgetEntries } from './ledger.js';
 
 const text = (body, isError = false) => ({ content: [{ type: 'text', text: body }], isError });
@@ -16,13 +16,19 @@ export function buildMemoryServer() {
       'remember',
       'Keep one thing worth knowing next time: a decision, a preference, how a project is ' +
       'built or deployed, where something lives. One line. Say which project it is about if ' +
-      'it is about one.',
+      'it is about one, and file it under a kind when it plainly is one.',
       {
         note: z.string().describe('The thing to remember, in one line'),
         project: z.string().optional().describe('The project it concerns, if any'),
+        kind: z.enum(KINDS).optional()
+          .describe('What sort of thing it is, when it is clearly one of these'),
+        pinned: z.boolean().optional()
+          .describe('Keep it in view in every conversation regardless of subject. For the few ' +
+            'facts that are always relevant — how they like to work, a standing constraint. ' +
+            'A pinned note costs its space on every turn, so pin sparingly.'),
       },
-      async ({ note, project }) => {
-        const line = remember(note, project);
+      async ({ note, project, kind, pinned }) => {
+        const line = remember(note, project, { kind, pinned });
         return line ? text(`Remembered: ${line}`) : text('Nothing worth keeping in that.', true);
       },
       { annotations: { readOnlyHint: false } },

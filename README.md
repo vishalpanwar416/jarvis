@@ -288,6 +288,22 @@ through its `remember` tool when something would save a question next time: a
 decision, a preference, how a project deploys. The newest fill a budget at the
 top of every session; `forget` drops any that mention a given word.
 
+A note can be filed under a kind — `preference`, `decision`, `location`,
+`howto` — and pinned. Pinning means *keep this in view whatever the
+conversation turns out to be about*: pinned notes get their own section ahead
+of the rest, take their space before the budget is spent, and are never
+dropped for age. The file is plain text and the pin is one character, so you
+can pin something yourself by changing `-` to `+`:
+
+```
++ [2026-10-15] (jarvis) preference: tests are written with node --test
+- [2026-09-20] (sanero) Production deploys go out through Vercel
+```
+
+Notes written before kinds and pins existed parse as unpinned and unfiled, so
+nothing on disk had to change. A line this parser cannot read is left exactly
+where it is rather than dropped — `notes.md` is a file you are meant to edit.
+
 **A project index** — `~/.jarvis/memory/projects.json`, rebuilt by looking
 rather than by being told. Walks `~/Development` for project markers, so naming
 a project resolves to a path without anyone having written that path down. The

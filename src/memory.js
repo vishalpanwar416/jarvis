@@ -194,33 +194,118 @@ export function projectAt(dir) {
 
 // ---- notes ----
 
+// The kinds a note can be filed under. A short closed set on purpose: the
+// point is to tell a standing preference apart from a one-off observation,
+// not to build a taxonomy nobody maintains.
+export const KINDS = ['preference', 'decision', 'location', 'howto'];
+
+// A note on disk, and the two things layer on top of the old shape:
+//
+//   - [2026-10-15] (jarvis) decision: deploys go out through Vercel
+//   + [2026-10-15] (jarvis) preference: tests are written with node --test
+//
+// The leading + is a pin — it means "this is true regardless of what else
+// is going on", and pinned notes keep their place in the prompt and are
+// never dropped for age. A person editing notes.md by hand pins something
+// by changing one character, which is the whole reason it is a character.
+//
+// Lines written before any of this parse as unpinned and unfiled, so the
+// notes already on disk keep working and keep their meaning.
+const NOTE_RE = /^([-+])\s*\[([^\]]*)\]\s*(?:\(([^)]*)\)\s*)?(.*)$/;
+
+export function parseNote(line) {
+  const match = NOTE_RE.exec(String(line ?? '').trim());
+  if (!match) return null;
+  const [, mark, date, project, rest] = match;
+  // A kind counts only if it is one of the kinds. Without that check, a
+  // note reading "Note: ring the office" gets filed under a kind called
+  // "Note", and the set stops being closed the first time anyone writes
+  // a sentence with a colon in it.
+  const split = /^([A-Za-z]+):\s*(.*)$/.exec(rest);
+  const kind = split && KINDS.includes(split[1].toLowerCase()) ? split[1].toLowerCase() : '';
+  return {
+    raw: line.trim(),
+    pinned: mark === '+',
+    date,
+    project: (project ?? '').trim(),
+    kind,
+    text: (kind ? split[2] : rest).trim(),
+  };
+}
+
+export function formatNote({ pinned = false, date, project = '', kind = '', text }) {
+  return `${pinned ? '+' : '-'} [${date}]${project ? ` (${project})` : ''}${kind ? ` ${kind}:` : ''} ${text}`;
+}
+
 export function loadNotes() {
   return (read(NOTES) ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
-// One line, dated, optionally about a project. Returns what was kept.
+export function parseNotes() {
+  return loadNotes().map(parseNote).filter(Boolean);
+}
+
+// Drops the oldest notes past the cap — but only the unpinned ones. A note
+// someone pinned is one they asked to keep, and age is not a reason to go
+// back on that. Raw lines are carried through untouched, so anything in the
+// file that this module cannot parse survives a write.
+function cull(lines) {
+  const out = [...lines];
+  for (let i = 0; i < out.length && out.length > MAX_NOTES; ) {
+    if (parseNote(out[i])?.pinned) i += 1;
+    else out.splice(i, 1);
+  }
+  return out;
+}
+
+// One line, dated, optionally about a project, optionally filed and pinned.
+// Returns what was kept.
 //
 // A note already held is not written twice: the same fact learned again is
 // the same fact, and a memory that repeats itself reads as a memory that
-// is not being used.
-export function remember(note, project = '') {
+// is not being used. Learning it again *with* a kind or a pin is different
+// — that is new information about an old fact — so it upgrades the line
+// that is already there rather than being dropped on the floor.
+export function remember(note, project = '', { kind = '', pinned = false } = {}) {
   const text = String(note ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_NOTE_CHARS);
   if (!text) return null;
   const tag = String(project ?? '').trim();
-  const line = `- [${new Date().toISOString().slice(0, 10)}]${tag ? ` (${tag})` : ''} ${text}`;
+  const filed = KINDS.includes(String(kind ?? '').toLowerCase()) ? String(kind).toLowerCase() : '';
+  const line = formatNote({
+    pinned: Boolean(pinned),
+    date: new Date().toISOString().slice(0, 10),
+    project: tag,
+    kind: filed,
+    text,
+  });
 
   const notes = loadNotes();
-  const already = notes.find((existing) => existing.replace(/^- \[[^\]]*\]\s*/, '') === line.replace(/^- \[[^\]]*\]\s*/, ''));
-  if (already) return already;
+  // The same fact about the same project, whenever it was learned and
+  // however it was filed.
+  const sameAs = (entry) =>
+    entry && entry.text.toLowerCase() === text.toLowerCase() && entry.project === tag;
+  const at = notes.findIndex((existing) => sameAs(parseNote(existing)));
 
-  const kept = [...notes, line].slice(-MAX_NOTES);
+  let kept;
+  if (at !== -1) {
+    const held = parseNote(notes[at]);
+    // Only ever upwards: a note does not get unpinned or unfiled by being
+    // mentioned again in passing.
+    const grown = { ...held, pinned: held.pinned || Boolean(pinned), kind: held.kind || filed };
+    if (grown.pinned === held.pinned && grown.kind === held.kind) return held.raw;
+    kept = [...notes];
+    kept[at] = formatNote(grown);
+  } else {
+    kept = cull([...notes, line]);
+  }
+
   try {
     fs.mkdirSync(MEMORY_DIR, { recursive: true });
     fs.writeFileSync(NOTES, `${kept.join('\n')}\n`);
   } catch {
     return null;
   }
-  return line;
+  return at !== -1 ? kept[at] : line;
 }
 
 // Drop every note containing `match`. Returns how many went.
@@ -240,9 +325,41 @@ export function forget(match) {
 
 // ---- what goes into the prompt ----
 
+// Named rather than inlined so its length can be reserved out of the
+// budget before the notes are fitted into what is left.
+const TAIL =
+  'Remember anything worth keeping with the remember tool — a decision, a preference, ' +
+  'where something lives, how a project is deployed. Keep each one to a line, and do not ' +
+  'write down what this block already says. File it as a preference, decision, location ' +
+  'or howto when it plainly is one, and pin only what should be in front of you in every ' +
+  'conversation regardless of subject — a pinned note costs its space on every turn of ' +
+  'every session.';
+
+
+// Newest first into whatever room is left, then back into the order they
+// were written. Filling oldest-first would spend the budget before reaching
+// the note most likely to matter.
+function fit(entries, room) {
+  const keep = [];
+  let used = 0;
+  for (const entry of [...entries].reverse()) {
+    if (used + entry.raw.length + 1 > room) break;
+    used += entry.raw.length + 1;
+    keep.unshift(entry);
+  }
+  return keep;
+}
+
+
 // The block prepended to every conversation. Kept to a budget: the index
 // is worth more than the notes when both cannot fit, because a wrong path
 // wastes a tool call and a missing preference only costs a little polish.
+// maxChars budgets the notes, which are the part that grows without limit.
+// Three things sit outside it and are always kept: the project index,
+// which is worth more than any note when both cannot fit; the closing
+// instruction; and pinned notes, which are reserved ahead of both — a pin
+// that a budget could drop would not mean anything. So a block can exceed
+// maxChars, and does when the index alone is larger than it.
 export function memoryBlock({ maxChars = 4000 } = {}) {
   const lines = [];
   const { projects } = loadIndex();
@@ -261,23 +378,26 @@ export function memoryBlock({ maxChars = 4000 } = {}) {
         'call it rather than searching the disk, and rather than guessing a path.');
     }
   }
-  const notes = loadNotes();
-  if (notes.length) {
-    lines.push('', 'What you have learned before now (most recent last):');
-    // Newest first into the budget, then put them back in order.
-    const room = Math.max(0, maxChars - lines.join('\n').length);
-    const keep = [];
-    let used = 0;
-    for (const note of [...notes].reverse()) {
-      if (used + note.length + 1 > room) break;
-      used += note.length + 1;
-      keep.unshift(note);
-    }
-    lines.push(...keep);
-  }
+  const notes = parseNotes();
+  const section = (heading, entries, reserve = 0) => {
+    if (!entries.length) return;
+    const room = Math.max(0, maxChars - lines.join('\n').length - reserve);
+    const keep = fit(entries, room);
+    // A heading over nothing is worse than no heading, and when the budget
+    // is this tight it is the likelier outcome of the two.
+    if (keep.length) lines.push('', heading, ...keep.map((entry) => entry.raw));
+  };
+
+  // Pinned notes get first claim on the budget, because surviving exactly
+  // this truncation is what pinning one is for. The ordinary ones take what
+  // is left once there is room for the closing instruction too — the one
+  // place a note is worth less than the sentence telling the model to keep
+  // writing them.
+  section('Standing facts — true whatever this conversation turns out to be about:',
+    notes.filter((note) => note.pinned));
+  section('What you have learned before now (most recent last):',
+    notes.filter((note) => !note.pinned), TAIL.length + 2);
   if (!lines.length) return '';
-  lines.push('', 'Remember anything worth keeping with the remember tool — a decision, a ' +
-    'preference, where something lives, how a project is deployed. Keep each one to a ' +
-    'line, and do not write down what this block already says.');
+  lines.push('', TAIL);
   return lines.join('\n');
 }

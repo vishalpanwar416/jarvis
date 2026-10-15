@@ -139,3 +139,166 @@ test('an empty store produces no block at all', () => {
   mem.loadIndex({ refresh: true, roots: [path.join(home, 'nothing-here')] });
   assert.equal(mem.memoryBlock(), '', 'nothing known means nothing said');
 });
+
+// ---- kinds and pins ----
+//
+// These run after the test above has emptied the store, and each starts
+// from a clean notes file. No global beforeEach: the tests further up this
+// file deliberately build on each other's state.
+
+const fresh = () => {
+  fs.rmSync(path.join(mem.MEMORY_DIR, 'notes.md'), { force: true });
+};
+
+test('notes written before any of this still parse', () => {
+  // The shape that was on disk before kinds and pins existed.
+  const old = mem.parseNote('- [2026-09-20] (sanero) Production deploys go out through Vercel');
+  assert.equal(old.pinned, false);
+  assert.equal(old.kind, '', 'unfiled, not mis-filed');
+  assert.equal(old.project, 'sanero');
+  assert.equal(old.text, 'Production deploys go out through Vercel');
+
+  const untagged = mem.parseNote('- [2026-09-21] Prefers node --test over jest');
+  assert.equal(untagged.project, '');
+  assert.equal(untagged.text, 'Prefers node --test over jest');
+});
+
+test('a pin is one character, and a kind is one word', () => {
+  const pinned = mem.parseNote('+ [2026-10-15] (jarvis) preference: tests use node --test');
+  assert.equal(pinned.pinned, true);
+  assert.equal(pinned.kind, 'preference');
+  assert.equal(pinned.text, 'tests use node --test');
+});
+
+test('only a real kind is treated as one', () => {
+  // Otherwise the set stops being closed the first time someone writes a
+  // sentence with a colon in it.
+  const note = mem.parseNote('- [2026-10-15] Note: ring the office before nine');
+  assert.equal(note.kind, '', 'an arbitrary word is not a kind');
+  assert.equal(note.text, 'Note: ring the office before nine', 'and the text keeps its colon');
+
+  const url = mem.parseNote('- [2026-10-15] (api) see https://example.com/docs for the schema');
+  assert.equal(url.kind, '');
+  assert.match(url.text, /^see https/);
+});
+
+test('what cannot be parsed is not pretended to be a note', () => {
+  assert.equal(mem.parseNote('just some text someone typed'), null);
+  assert.equal(mem.parseNote(''), null);
+  assert.equal(mem.parseNote(null), null);
+});
+
+test('a note survives the round trip to text and back', () => {
+  for (const note of [
+    { pinned: true, date: '2026-10-15', project: 'jarvis', kind: 'preference', text: 'node --test' },
+    { pinned: false, date: '2026-10-15', project: '', kind: '', text: 'a plain observation' },
+    { pinned: false, date: '2026-10-15', project: 'api', kind: 'location', text: 'config lives in ~/.config' },
+  ]) {
+    const back = mem.parseNote(mem.formatNote(note));
+    assert.equal(back.pinned, note.pinned);
+    assert.equal(back.project, note.project);
+    assert.equal(back.kind, note.kind);
+    assert.equal(back.text, note.text);
+  }
+});
+
+test('a note can be filed and pinned when it is kept', () => {
+  fresh();
+  const line = mem.remember('tests are written with node --test', '', { kind: 'preference', pinned: true });
+  assert.match(line, /^\+ \[\d{4}-\d{2}-\d{2}\] preference: tests are written with node --test$/);
+  const [note] = mem.parseNotes();
+  assert.equal(note.pinned, true);
+  assert.equal(note.kind, 'preference');
+});
+
+test('a kind that is not a kind is simply dropped', () => {
+  fresh();
+  const line = mem.remember('something', 'alpha', { kind: 'nonsense' });
+  assert.match(line, /\(alpha\) something$/, 'the note is kept, the made-up kind is not');
+  assert.equal(mem.parseNotes()[0].kind, '');
+});
+
+test('learning a fact again can pin it, but never unpin it', () => {
+  fresh();
+  mem.remember('deploys through Vercel', 'alpha');
+  assert.equal(mem.parseNotes().length, 1);
+
+  const pinned = mem.remember('deploys through Vercel', 'alpha', { pinned: true, kind: 'decision' });
+  assert.equal(mem.parseNotes().length, 1, 'still one fact, not two');
+  assert.equal(mem.parseNotes()[0].pinned, true, 'learning it again with a pin pins it');
+  assert.equal(mem.parseNotes()[0].kind, 'decision');
+  assert.match(pinned, /^\+ /);
+
+  mem.remember('deploys through Vercel', 'alpha');
+  assert.equal(mem.parseNotes()[0].pinned, true, 'mentioning it in passing does not unpin it');
+  assert.equal(mem.parseNotes()[0].kind, 'decision', 'nor unfile it');
+});
+
+test('the same fact about a different project is a different fact', () => {
+  fresh();
+  mem.remember('uses pnpm', 'alpha');
+  mem.remember('uses pnpm', 'beta');
+  assert.equal(mem.parseNotes().length, 2);
+});
+
+test('pinned notes are not dropped for age', () => {
+  fresh();
+  mem.remember('the oldest pinned thing', '', { pinned: true });
+  for (let i = 0; i < 250; i++) mem.remember(`ordinary note ${i}`);
+  const notes = mem.parseNotes();
+  assert.ok(notes.some((n) => n.text === 'the oldest pinned thing'),
+    'a note someone asked to keep is kept');
+  assert.ok(!notes.some((n) => n.text === 'ordinary note 0'), 'the oldest unpinned one went');
+  assert.ok(notes.some((n) => n.text === 'ordinary note 249'), 'the newest is there');
+});
+
+test('pinned notes get their own section, ahead of the rest', () => {
+  fresh();
+  mem.loadIndex({ refresh: true, roots: [path.join(home, 'nothing-here')] });
+  mem.remember('an ordinary observation');
+  mem.remember('tests use node --test', '', { kind: 'preference', pinned: true });
+
+  const block = mem.memoryBlock();
+  const standing = block.indexOf('Standing facts');
+  const learned = block.indexOf('What you have learned');
+  assert.ok(standing !== -1 && learned !== -1, 'both sections appear');
+  assert.ok(standing < learned, 'what is always true comes first');
+  assert.ok(block.indexOf('node --test') < learned, 'and the pinned note is in that section');
+});
+
+test('a pinned note survives a budget that drops everything else', () => {
+  fresh();
+  mem.loadIndex({ refresh: true, roots: [path.join(home, 'nothing-here')] });
+  mem.remember('the one thing that must always be known', '', { pinned: true });
+  for (let i = 0; i < 60; i++) mem.remember(`a chatty note number ${i} with some length to it`);
+
+  const block = mem.memoryBlock({ maxChars: 400 });
+  assert.ok(block.includes('must always be known'), 'surviving truncation is what pinning is for');
+  assert.ok(!block.includes('a chatty note'), 'while everything ordinary was dropped for it');
+});
+
+test('no pinned notes means no pinned section', () => {
+  fresh();
+  mem.loadIndex({ refresh: true, roots: [path.join(home, 'nothing-here')] });
+  mem.remember('just an ordinary note');
+  const block = mem.memoryBlock();
+  assert.ok(!block.includes('Standing facts'), 'a heading over nothing is worse than no heading');
+  assert.ok(block.includes('just an ordinary note'));
+});
+
+test('a line this module cannot parse is not destroyed by writing near it', () => {
+  fresh();
+  mem.remember('a real note');
+  const notes = path.join(mem.MEMORY_DIR, 'notes.md');
+  fs.appendFileSync(notes, 'a stray line someone typed into the file\n');
+  mem.remember('another real note');
+  assert.match(fs.readFileSync(notes, 'utf8'), /a stray line someone typed into the file/,
+    'notes.md is a file people edit; writing to it must not eat what it finds');
+});
+
+test('forgetting still takes pinned and filed notes', () => {
+  fresh();
+  mem.remember('deploys through Vercel', 'alpha', { pinned: true, kind: 'decision' });
+  assert.equal(mem.forget('Vercel'), 1, 'a pin keeps a note from ageing out, not from being dropped');
+  assert.deepEqual(mem.parseNotes(), []);
+});
