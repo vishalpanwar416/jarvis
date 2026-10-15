@@ -2,10 +2,14 @@
 //
 // No Ink, no React — just the same session streamed to stdout with the theme's
 // colours, so it stays usable from cron and pipes.
+import fs from 'node:fs';
 import { JarvisSession, isPreApproved } from './agent.js';
 import { buildAutomationServer } from './automations.js';
+import { buildMemoryServer, MEMORY_TOOLS } from './memory-tools.js';
+import { buildScreenServer, screenToolsAllowedUnasked } from './screen-tools.js';
 import { loadTheme } from './config.js';
 import { Voice } from './voice.js';
+import { framePrompt } from './persona.js';
 import { summarize } from './summarize.js';
 import { autopilotDecision, describeAnswers } from './autopilot.js';
 
@@ -25,7 +29,13 @@ export async function runOnce(prompt, { config, resume, yes = false, quiet = fal
   };
 
   const automationServer = buildAutomationServer(config);
+  const screenServer = buildScreenServer(config);
+  const unaskedScreen = screenToolsAllowedUnasked(config);
   const voice = config.voice.output ? new Voice(config) : null;
+  // --voice with nothing to say it with used to be silent in both senses:
+  // no speech, and no word about why. Say it once, up front.
+  if (voice && !voice.canSpeak) log(paint('warn', `  ${voice.speakBlocker()}`));
+  const spoken = Boolean(voice?.canSpeak);
   let denied = 0;
   let streamed = false;
 
@@ -34,7 +44,11 @@ export async function runOnce(prompt, { config, resume, yes = false, quiet = fal
     // the SDK skips the callback entirely under bypass, and we need it to
     // answer questions.
     config: { ...config, permissionMode: yes && !config.autopilot ? 'bypassPermissions' : config.permissionMode },
-    mcpServers: automationServer ? { automations: automationServer } : {},
+    mcpServers: {
+      memory: buildMemoryServer(),
+      ...(screenServer ? { screen: screenServer } : {}),
+      ...(automationServer ? { automations: automationServer } : {}),
+    },
     // Nobody is watching to answer a prompt here, so anything not pre-approved
     // is refused with a reason the model can work around — unless --yes.
     // Autopilot goes further and answers the model's questions too, with the
@@ -48,7 +62,8 @@ export async function runOnce(prompt, { config, resume, yes = false, quiet = fal
       : yes
       ? undefined
       : async (toolName) => {
-          if (isPreApproved(config, toolName)) return { behavior: 'allow' };
+          if (isPreApproved(config, toolName) || MEMORY_TOOLS.includes(toolName)
+              || unaskedScreen.includes(toolName)) return { behavior: 'allow' };
           denied += 1;
           log(paint('warn', `  denied ${toolName} (re-run with --yes to allow)`));
           return { behavior: 'deny', message: `${toolName} is not permitted in non-interactive mode.` };
@@ -74,6 +89,19 @@ export async function runOnce(prompt, { config, resume, yes = false, quiet = fal
 
     session.on('event', (event) => {
       switch (event.kind) {
+        // The session id is what --resume needs to continue this
+        // conversation. Quiet mode keeps stdout for the reply and stderr for
+        // errors, so a caller that wants it names a file to leave it in.
+        case 'init':
+          if (process.env.JARVIS_SESSION_FILE && event.sessionId) {
+            try {
+              fs.writeFileSync(process.env.JARVIS_SESSION_FILE, event.sessionId);
+            } catch (error) {
+              log(paint('warn', `  could not write JARVIS_SESSION_FILE: ${error.message}`));
+            }
+          }
+          break;
+
         case 'tool-start':
           log(paint('tool', `  ${theme.glyphs.tool} ${event.name} ${summarize(event.input)}`));
           break;
@@ -121,6 +149,8 @@ export async function runOnce(prompt, { config, resume, yes = false, quiet = fal
     });
 
     session.start();
-    session.send(prompt);
+    // --voice means this answer is heard, not read. Ask for one that is
+    // worth hearing rather than stripping the markdown off one that isn't.
+    session.send(framePrompt(prompt, { voice: spoken }));
   });
 }

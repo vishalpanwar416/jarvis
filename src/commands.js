@@ -82,6 +82,24 @@ export const COMMANDS = {
     },
   },
 
+  look: {
+    help: 'have a look at the screen: /look [what to look for] (add window for just the front one)',
+    run: (args, api) => {
+      const blocker = api.screen.blocker();
+      if (blocker) return api.error(`cannot see the screen: ${blocker}`);
+      // A bare /look is "what am I looking at"; anything after it is the
+      // question to answer about the screen. Either way the model is the one
+      // that calls the tool — this only says what to look at and why, so the
+      // answer is a sentence about the screen rather than a raw screenshot.
+      const window = args[0]?.toLowerCase() === 'window';
+      const rest = (window ? args.slice(1) : args).join(' ').trim();
+      api.ask(
+        `Look at ${window ? 'the window in front' : 'my screen'} with the look tool` +
+          `${window ? ' (target "window")' : ''}, then ${rest || 'tell me what is on it'}.`,
+      );
+    },
+  },
+
   autopilot: {
     help: 'answer every prompt, question and picker yourself: on|off (bare toggles)',
     run: ([arg], api) => {

@@ -132,7 +132,7 @@ export default function Composer({ value, onChange, onSubmit, active, busy, hist
   // else the spoken words would run into the draft, so add one.
   const gap = value && cursor < value.length && !/\s$/.test(value) ? ' ' : '';
   const spoken = ghost ? `${gap}${ghost}` : '';
-  const marker = listening ? glyphs.mic : busy ? spinner : glyphs.user;
+  const marker = busy ? spinner : glyphs.user;
   const markerColor = listening ? colors.err : busy ? colors.warn : colors.accent;
   const idle = value.length === 0 && !spoken && !active && !listening;
 

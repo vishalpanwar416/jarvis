@@ -98,8 +98,17 @@ function exited(child, timeoutMs) {
 }
 
 // Speech synthesizers choke on markdown; strip it down to prose.
-export function speakable(text) {
-  return text
+//
+// `limit` caps how much is read: past it the text is cut at the last sentence
+// that ended before the cap, so it stops like someone finishing a thought
+// rather than mid-word. Only a cut with no sentence end in its last third
+// falls back to the hard limit. 0 means read the lot.
+//
+// The cap matters even when the model has been told to answer briefly: one
+// turn in ten is a long answer anyway, and a synthesizer given six paragraphs
+// reads all six at you with no way to skip ahead.
+export function speakable(text, limit = 0) {
+  const flat = String(text ?? '')
     .replace(/```[\s\S]*?```/g, ' (code omitted) ')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/^\s*[-*+]\s+/gm, '')
@@ -108,6 +117,41 @@ export function speakable(text) {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
+  if (!limit || flat.length <= limit) return flat;
+  const cut = flat.slice(0, limit);
+  const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
+  return (end > limit * 0.66 ? cut.slice(0, end + 1) : cut).trim();
+}
+
+// What a transcriber writes down when it is given something that is not
+// speech. These are whisper's own habits rather than anything anyone said: a
+// stretch of room tone comes back as "Thank you for watching!", or the
+// subtitle credit off the end of a video, or a single "you".
+//
+// It matters because the detector gates on loudness alone, and loudness is
+// not speech: a fan, music, or a conversation across the room can open a
+// take. Hands-free would then ask Jarvis about it — a turn spent, an answer
+// to a question nobody asked, and in a noisy room once every maxMs forever.
+//
+// Matched whole, so a real question that happens to contain one of these
+// words is untouched.
+const NOISE = new RegExp(
+  '^(?:' +
+    [
+      '', 'you', 'yeah', 'yes', 'uh', 'um+', 'hmm+', 'mm+', 'ah', 'oh', 'so', 'and', 'the', 'a', 'i', 'it',
+      'okay', 'ok', 'bye', 'goodbye', 'thanks', 'thank you',
+      '(?:thank you|thanks) for watching[!.]*', 'subtitles by.*', 'amara\\.org.*',
+      '\\[[^\\]]*\\]', '\\([^)]*\\)', '♪+',
+    ].join('|') +
+    ')[\\s.,!?\'"]*$',
+  'i',
+);
+
+// Worth asking about, as opposed to something the room said. Punctuation on
+// its own counts as nothing: a take of pure silence often transcribes to ".".
+export function isNoise(text) {
+  const said = String(text ?? '').trim().replace(/^[\s.,!?'"\-–—]+|[\s.,!?'"\-–—]+$/g, '');
+  return !said || NOISE.test(said);
 }
 
 // ── voice activity detection ────────────────────────────────────────────────
@@ -135,6 +179,13 @@ function loudness(chunk) {
 // Speech is loudness that stands clear of the room, so the gate rides on a
 // noise floor learned from the quiet frames — a fixed threshold that works at
 // one desk is deaf or twitchy at the next. Set vad.threshold to pin it anyway.
+//
+// Learned from the quiet frames, and only those: a steady sound that is
+// already above the gate when it arrives — a fan starting, music, a
+// conversation across the room — keeps the floor from ever rising to meet it,
+// and is heard as one phrase after another. The gate cannot tell speech from
+// sound, so the guard against that is downstream: maxMs ends the take and
+// isNoise() above throws away what it transcribes to.
 //
 // feed() returns 'start' when a phrase begins, 'stop' when it has been quiet
 // long enough to be over, and null the rest of the time.
@@ -249,7 +300,7 @@ export class Voice {
 
   // ── output ────────────────────────────────────────────────────────────────
   speak(text) {
-    const clean = speakable(text);
+    const clean = speakable(text, num(this.config.voice.tts.maxChars, 700));
     if (!clean || !this.canSpeak) return false;
     this.stopSpeaking();
 

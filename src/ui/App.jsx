@@ -15,10 +15,14 @@ import { ThemeContext } from './theme.js';
 import { JarvisSession, emptyTotals } from '../agent.js';
 import { createAwareness } from '../awareness.js';
 import { buildAutomationServer } from '../automations.js';
-import { Voice } from '../voice.js';
+import { buildMemoryServer, MEMORY_TOOLS } from '../memory-tools.js';
+import { buildScreenServer, screenToolsAllowedUnasked } from '../screen-tools.js';
+import { Voice, isNoise } from '../voice.js';
+import { Screen } from '../screen.js';
 import { runCommand } from '../commands.js';
 import { loadTheme } from '../config.js';
-import { autopilotDecision, autopilotPrefix, describeAnswers, pickRecommended } from '../autopilot.js';
+import { autopilotDecision, describeAnswers, pickRecommended } from '../autopilot.js';
+import { framePrompt } from '../persona.js';
 
 const KEY_HINT = 'ctrl+p autopilot · ctrl+a aware · ctrl+o speech · ctrl+t talk · ctrl+h hands-free · esc stop';
 
@@ -71,6 +75,8 @@ export default function App({ config: initialConfig, resume }) {
   showThinkingRef.current = config.ui.showThinking;
   autopilotRef.current = autopilot;
   const voice = useMemo(() => new Voice(initialConfig), [initialConfig]);
+  // Only ever asked what it can do, here — the model is what actually looks.
+  const screen = useMemo(() => new Screen(initialConfig), [initialConfig]);
   const awareness = useMemo(() => createAwareness(config), [config]);
 
   const push = useCallback((item) => {
@@ -81,7 +87,7 @@ export default function App({ config: initialConfig, resume }) {
   // the promise stored alongside the request.
   // Autopilot short-circuits this: everything is allowed, and a question from
   // the model is answered with its recommended option instead of shown.
-  const approvedRef = useRef(new Set(initialConfig.allowedTools ?? []));
+  const approvedRef = useRef(new Set([...(initialConfig.allowedTools ?? []), ...MEMORY_TOOLS, ...screenToolsAllowedUnasked(initialConfig)]));
   const canUseTool = useCallback(
     (toolName, input, { suggestions }) => {
       if (autopilotRef.current) {
@@ -110,9 +116,14 @@ export default function App({ config: initialConfig, resume }) {
   // ── the session ───────────────────────────────────────────────────────────
   const session = useMemo(() => {
     const automationServer = buildAutomationServer(initialConfig);
+    const screenServer = buildScreenServer(initialConfig);
     return new JarvisSession({
       config: initialConfig,
-      mcpServers: automationServer ? { automations: automationServer } : {},
+      mcpServers: {
+        memory: buildMemoryServer(),
+        ...(screenServer ? { screen: screenServer } : {}),
+        ...(automationServer ? { automations: automationServer } : {}),
+      },
       canUseTool,
       resume,
     });
@@ -236,9 +247,15 @@ export default function App({ config: initialConfig, resume }) {
       config,
       session,
       voice,
+      screen,
       state: { voiceOut, awareness: awarenessOn, autopilot, handsFree },
       note: (text) => push({ kind: 'note', text }),
       error: (text) => push({ kind: 'error', text }),
+      // A command that wants the model to do something rather than the UI.
+      // The command the person typed is already in the transcript, so this
+      // sends without putting a second line there saying the same thing.
+      ask: (text) =>
+        session.send(framePrompt(text, { autopilot: autopilot && !initialConfig.autopilot, voice: voiceOut })),
       pick: (request) => setPicker(request),
       setAutopilot,
       clear: () => {
@@ -253,12 +270,12 @@ export default function App({ config: initialConfig, resume }) {
       setModel: (model) => setConfig((current) => ({ ...current, model })),
       setPermissionMode: (mode) => setConfig((current) => ({ ...current, permissionMode: mode })),
     }),
-    [config, session, voice, voiceOut, awarenessOn, autopilot, handsFree, push, stdout, exit],
+    [config, session, voice, screen, voiceOut, awarenessOn, autopilot, handsFree, push, stdout, exit, initialConfig.autopilot],
   );
 
-  // The system prompt is fixed once the session starts, so autopilot switched
-  // on afterwards rides along with each message instead. The transcript shows
-  // only what you typed.
+  // The system prompt is fixed once the session starts, so anything decided
+  // afterwards — autopilot, speech out — rides along with each message
+  // instead. The transcript shows only what you typed.
   const submit = useCallback(
     (text) => {
       setHistory((current) => [...current, text]);
@@ -268,10 +285,16 @@ export default function App({ config: initialConfig, resume }) {
         return;
       }
       push({ kind: 'user', text });
-      const armedLate = autopilot && !initialConfig.autopilot;
-      session.send(armedLate ? `${autopilotPrefix()}\n\n${text}` : text);
+      // An answer that is about to be read out loud is a different piece of
+      // writing from one you skim, so speech out is said per turn too.
+      session.send(
+        framePrompt(text, {
+          autopilot: autopilot && !initialConfig.autopilot,
+          voice: voiceOut,
+        }),
+      );
     },
-    [api, push, session, autopilot, initialConfig.autopilot],
+    [api, push, session, autopilot, initialConfig.autopilot, voiceOut],
   );
 
   // What was already in the composer when dictation started, kept so the
@@ -388,7 +411,14 @@ export default function App({ config: initialConfig, resume }) {
         setListening(false);
         setPartial('');
         setDraft('');
-        if (text) submitRef.current(text);
+        if (!text) return;
+        // The detector gates on loudness, which is not speech: a fan, music,
+        // or the next room can open a take, and what it transcribes to is
+        // whisper's filler rather than a question. Asking it would cost a
+        // turn and answer nothing, so it stands down instead — quietly, or
+        // a noisy room fills the transcript with notes about itself.
+        if (isNoise(text)) return;
+        submitRef.current(text);
       },
       onError: (text) => push({ kind: 'error', text: `hands-free: ${text}` }),
     });
@@ -432,6 +462,17 @@ export default function App({ config: initialConfig, resume }) {
     if (config.voice.stt.prewarm !== false) voice.warm();
   }, [voice, config.voice.stt.prewarm]);
 
+  // --voice, or voice.output in the config, with nothing on PATH to say it:
+  // ctrl+o checks this, but a start-up setting never passed through it, so
+  // the status line claimed speech while every reply went by in silence.
+  useEffect(() => {
+    if (!initialConfig.voice.output) return;
+    const blocker = voice.speakBlocker();
+    if (!blocker) return;
+    push({ kind: 'error', text: `speech out unavailable: ${blocker}` });
+    setVoiceOut(false);
+  }, [voice, initialConfig.voice.output, push]);
+
   // A picker closes the moment you answer it, so a slow handler can't leave a
   // dead menu on screen.
   const resolvePicker = useCallback(
@@ -471,8 +512,12 @@ export default function App({ config: initialConfig, resume }) {
         if (listening) {
           arm(false);
           setPartial('');
-          if (handsFree) voice.abortTake();
-          else if (voice.canStream) voice.stopStreaming();
+          // Thrown away, not flushed — in both modes. stopStreaming() leaves
+          // the take open for as long as the transcriber takes to answer a
+          // flush nobody is waiting for, and a ctrl+t in that window used to
+          // be refused ("could not start the recorder") because the take it
+          // was waiting on had already been discarded.
+          if (voice.canStream) voice.abortTake();
           else voice.stopRecording().catch(() => {});
           setDraft(handsFree ? '' : dictation.current.base);
           dictation.current = { base: '', text: '' };

@@ -41,7 +41,8 @@
   "scripts": {
     "start": "node bin/jarvis.mjs",
     "build": "node build.mjs --force",
-    "prepublishOnly": "node build.mjs --force"
+    "prepublishOnly": "node build.mjs --force",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.261",

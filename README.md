@@ -41,7 +41,7 @@ cd jarvis && npm install && npm link
 | --- | --- |
 | Colours, glyphs, borders, banner, layout | `themes/*.json` |
 | Chat layout, panels, key handling | `src/ui/*.jsx` |
-| Persona, model, automations, voice, awareness | `jarvis.config.json` |
+| Persona, model, automations, voice, screen, awareness | `jarvis.config.json` |
 
 `src/ui/*.jsx` is compiled by esbuild at launch, and only when a source file
 changed — so editing a component and re-running `jarvis` is the whole loop. No
@@ -55,13 +55,21 @@ build.mjs             the JSX bundle step (automatic)
 src/
   agent.js            drives the Agent SDK, flattens its messages into events
   config.js           config + theme loading and merge order
-  persona.js          builds the system prompt from config.persona
+  persona.js          builds the system prompt, and frames each turn
   automations.js      shell tasks → tools the model can call
   awareness.js        the ambient data collectors
   voice.js            speech in/out, all via external binaries
+  screen.js           one screenshot, shrunk, and then gone
+  screen-tools.js     the `look` tool, as the model sees it
   commands.js         slash commands
   models.js           the models /model offers, and name resolution
   oneshot.js          the non-interactive renderer
+  serve.js            the resident JSON-line protocol (--serve)
+  memory.js           what it knows between conversations
+  memory-tools.js     remember / forget / projects, as tools
+  autopilot.js        the "yes to everything" mode
+  local.js            the Ollama proxy behind --local
+  summarize.js        a tool call in a few words
   ui/
     App.jsx           state, event wiring, key map, layout
     Composer.jsx      the prompt line and the slash-command menu
@@ -73,8 +81,14 @@ src/
     AwarenessPanel.jsx / StatusBar.jsx / Banner.jsx / PermissionPrompt.jsx
     markdown.jsx      the small markdown renderer
     theme.js          theme context
+test/                 npm test — memory, the serve protocol, voice, screen, commands
 themes/               midnight · amber · mono
 ```
+
+`npm test` is `node --test`, nothing else: no framework, no mocks of the SDK.
+`serve.js` takes its session, its two streams and its exit as arguments so the
+whole protocol can be driven from a test without a model behind it, and the
+voice tests feed the detector PCM frames they build themselves.
 
 ## Keys
 
@@ -95,8 +109,8 @@ themes/               midnight · amber · mono
 
 ## Slash commands
 
-`/help` `/autopilot` `/voice` `/listen` `/awareness` `/automations` `/run`
-`/model` `/permissions` `/theme` `/usage` `/session` `/clear` `/quit`
+`/help` `/look` `/autopilot` `/voice` `/listen` `/awareness` `/automations`
+`/run` `/model` `/permissions` `/theme` `/usage` `/session` `/clear` `/quit`
 
 Typing `/` opens a filtered menu of them under the prompt: `↑`/`↓` to move,
 `tab` to complete the name so you can add arguments, `enter` to run the
@@ -162,6 +176,30 @@ question nobody asked) and `think: false` (a reasoning pass costs minutes at
 this speed, and on small internal calls it ate the entire token budget and
 returned no answer).
 
+## Driving it from another program
+
+Two ways, one slow and simple, one fast.
+
+**One-shot.** `jarvis -q "question"` prints the reply on stdout and nothing
+else, and exits non-zero with the reason on stderr when it could not answer.
+To carry a conversation across calls, set `JARVIS_SESSION_FILE` to a path and
+jarvis writes the session id there as soon as the session starts; pass it
+back as `--resume <id>` on the next call. Quiet mode stays quiet — the id
+goes to the file, not to the terminal. Every call pays the full start-up:
+Node, the SDK, the Claude Code process, the session.
+
+**Resident.** `jarvis --serve` stays up and takes questions as JSON lines on
+stdin, one object per line, answering on stdout the same way — `ready`, then
+per question `init` (the session id), `delta` for each piece of the reply as
+it streams, and `result` with the whole of it. `resume` on a question picks
+the conversation; the session already open is reused when it matches, so
+follow-ups skip everything but the model. It exits on its own after
+`--idle` seconds without a question (600 by default). Only protocol goes to
+stdout. A question marked `"voice": true` was spoken and will be read back, so
+its answer is written to be heard — see Voice below. The full shape is at the
+top of `src/serve.js`. The Bezelrig GNOME extension's floating Jarvis bubble
+uses this, falling back to one-shot when it cannot.
+
 ## Permissions
 
 Read-only tools are pre-approved in `allowedTools`. Anything else pauses with a
@@ -171,6 +209,12 @@ posture with `/permissions acceptEdits` or `bypassPermissions`, or set
 
 One-shot mode has nobody to ask, so it **denies** anything not pre-approved and
 tells the model why. Pass `-y` to let it act.
+
+Two things are allowed everywhere, including where nothing else may act:
+remembering, which writes only to Jarvis' own store under `~/.jarvis` and never
+to your files, and `look`, because someone asking what is on their screen is
+already looking at it. Both are reversible in config — see
+`screen.ask` under Seeing the screen.
 
 **Your existing Claude Code settings still apply.** `settingSources` defaults to
 `["user", "project", "local"]`, so jarvis loads your `CLAUDE.md`, skills *and*
@@ -291,6 +335,35 @@ sure are replayed from a buffer, so the first syllable isn't clipped.
 last before your sentence counts as finished; `vad.enabled: false` puts ctrl+t
 back to two presses and turns hands-free off entirely.
 
+The detector gates on loudness, and loudness is not speech: a fan, music or the
+next room can open a take. What that transcribes to is a transcriber's filler —
+"you", "Thank you for watching!", the subtitle credit off the end of a video —
+so hands-free drops those rather than asking Jarvis about them. A real question
+containing one of those words is matched whole and gets through.
+
+### Answers written to be heard
+
+A spoken answer is a sentence somebody says to you; a written one is a page you
+skim. They are not the same piece of writing, so when the reply is going to be
+read out — `ctrl+o`, `--voice`, or a question that arrived by voice through
+`--serve` — the turn carries that fact to the model, and it writes for the ear:
+the answer first, two or three sentences, no markdown, no paths spelled out
+character by character, and a word at the end if it left anything out.
+
+It is said per turn rather than baked into the persona, because the same
+conversation is typed at one moment and talked to the next. Asked the same
+question both ways:
+
+```
+typed   Three, sir — all in `test/`: `memory.test.mjs`, `serve.test.mjs`, …
+spoken  Three, sir — covering memory, the serve module, and voice. They're all
+        untracked in git so far, written for node's built-in test runner.
+```
+
+Whatever still comes back long is cut at the last sentence that fits inside
+`voice.tts.maxChars` (700 by default, `0` reads the lot) — the whole answer is
+on screen either way.
+
 That needs a *streaming* backend: one that reads 16 kHz mono PCM on stdin and
 prints JSON lines — `{"type":"partial"|"segment"|"final","text":…}` — as it goes,
 plus `ready` once its model is up. It's held resident and warmed at startup,
@@ -310,6 +383,51 @@ and `"streaming": false` pins that behaviour even when a streamer is installed:
 ```
 
 `spd-say` is robotic; `sudo apt install espeak-ng` or piper is a real upgrade.
+
+## Seeing the screen
+
+"What's on my screen?" used to be the one question Jarvis couldn't answer.
+Now it has a single tool — `look` — that takes one frame, shows it to the
+model, and deletes it. Ask in words, or `/look`:
+
+```
+/look                              what's on the screen
+/look window                       just the window in front
+/look what does this error say     a question about what's there
+```
+
+Nothing is typed at the tool directly; it is called because the question needs
+it — "read this page", "is this the right branch", "what is this dialog asking
+me" — and the answer comes back as a sentence about the screen rather than as
+an image.
+
+The capture is an external backend, detected like the voice ones: the GNOME
+Shell D-Bus method, then `grim`, `gnome-screenshot`, `spectacle`, `maim`,
+`scrot`, `import`. On Wayland the shell's own method is usually the only one
+permitted, and it is tried first for that reason. Whatever comes back is
+shrunk to a long edge of `maxPixels` before it is sent — the model resizes a
+4K screenshot anyway, so sending it whole costs only waiting.
+
+```json
+"screen": { "enabled": true, "ask": false, "engine": "auto", "maxPixels": 1568 }
+```
+
+**The file does not outlive the answer.** Each capture happens in a directory
+of its own, made on the spot with owner-only permissions and removed in a
+`finally` — so a capture that fails halfway, or a model that never reads the
+result, still leaves nothing behind. There is a test for exactly that, because
+a picture of someone's screen is not a temp file to be casual about.
+
+For the same reason, `ask` is there: looking does not prompt by default, since
+being asked to approve a screenshot right after saying "what's on my screen"
+is friction for no gain — but a screenshot takes in whatever happens to be
+there, including a password manager left open, and the model may reach for it
+mid-task when nobody is thinking about what is on screen. `"ask": true` puts
+it behind a prompt; `"enabled": false` takes the tool away entirely.
+
+In the Bezelrig bubble this needs nothing extra: it asks through `--serve`, so
+"Jarvis, what am I looking at?" works, and the bubble's activity line says
+*Looking at the screen* while it does.
 
 ## Themes
 

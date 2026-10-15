@@ -32,8 +32,8 @@ export default function StatusBar({
     voiceOut ? { label: 'speech', tone: 'ok' } : null,
     awareness ? { label: 'aware', tone: 'ok' } : null,
     // Armed but quiet reads differently from actually hearing you.
-    handsFree && !listening ? { label: `${glyphs.mic} hands-free`, tone: 'ok' } : null,
-    listening ? { label: `${glyphs.mic} listening`, tone: 'err' } : null,
+    handsFree && !listening ? { label: 'hands-free', tone: 'ok' } : null,
+    listening ? { label: 'listening', tone: 'err' } : null,
   ].filter(Boolean);
 
   return (

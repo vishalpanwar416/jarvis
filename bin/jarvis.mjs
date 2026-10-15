@@ -5,6 +5,16 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig, listThemes } from '../src/config.js';
 import { buildUI } from '../build.mjs';
 
+// Called jarvis everywhere it is seen. Without this the shebang's `node` is
+// what shows up: in `ps`, in a system monitor, in the window list, and as
+// the terminal's title — which makes several of these indistinguishable
+// from every other Node program running.
+//
+// The title escape goes only to a terminal. In a pipe stdout is the reply
+// and nothing else, and an escape sequence in it would be corruption.
+process.title = 'jarvis';
+if (process.stdout.isTTY) process.stdout.write('\x1b]0;jarvis\x07');
+
 const HELP = `
 jarvis — a terminal assistant you can rebuild
 
@@ -26,7 +36,16 @@ options
       --resume <id>         resume a session id (see /session)
   -y, --yes                 one-shot mode: allow tool use without asking
   -q, --quiet               one-shot mode: reply only, no status lines
+      --serve               stay resident and take questions as JSON lines on
+                            stdin, answering on stdout (see src/serve.js)
+      --idle <seconds>      --serve: exit after this long without a question
+      --permission-seconds  --serve: how long to wait for a yes or no (default 120)
+                            (default 600, 0 never)
   -h, --help                this text
+
+environment
+  JARVIS_SESSION_FILE=<path>  one-shot mode: write the session id there, so a
+                            caller can continue the conversation with --resume
 
 edit the UI      src/ui/*.jsx      (rebuilt automatically on launch)
 edit the look    themes/*.json
@@ -62,6 +81,9 @@ function parseArgs(argv) {
       case '--autopilot': flags.autopilot = true; break;
       case '-y': case '--yes': flags.yes = true; break;
       case '-q': case '--quiet': flags.quiet = true; break;
+      case '--serve': flags.serve = true; break;
+      case '--idle': flags.idle = Number(take()); break;
+      case '--permission-seconds': flags.permissionSeconds = Number(take()); break;
       default:
         if (arg.startsWith('-')) throw new Error(`unknown option ${arg}`);
         positional.push(arg);
@@ -110,6 +132,16 @@ async function main() {
   if (flags.autopilot) overrides.autopilot = true;
 
   const config = loadConfig(overrides);
+
+  if (flags.serve) {
+    const { serve } = await import('../src/serve.js');
+    await serve({
+      config,
+      idleSeconds: Number.isFinite(flags.idle) ? flags.idle : 600,
+      permissionSeconds: Number.isFinite(flags.permissionSeconds) ? flags.permissionSeconds : 120,
+    });
+    return;
+  }
 
   if (prompt) {
     const { runOnce } = await import('../src/oneshot.js');

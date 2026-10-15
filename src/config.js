@@ -78,7 +78,10 @@ export const DEFAULTS = {
     autoSend: false,
     // 'auto' picks the first backend found on PATH. See src/voice.js for the
     // chains, or pin one: tts.engine = 'spd-say', stt.engine = 'whisper-cpp'.
-    tts: { engine: 'auto', voice: '', rate: '', command: '' },
+    // maxChars caps what gets read out: past it the reply is cut at the last
+    // sentence that fits, because nobody wants six paragraphs read at them
+    // and the whole answer is on screen anyway. 0 reads all of it.
+    tts: { engine: 'auto', voice: '', rate: '', command: '', maxChars: 700 },
     // stt.command transcribes a finished take; streamCommand transcribes while
     // you speak, so the words appear in the composer as you say them. Empty
     // means `jarvis-stt-stream` if it's on PATH. prewarm loads its model at
@@ -105,6 +108,32 @@ export const DEFAULTS = {
     // It goes deaf while a turn is running so it can't answer its own reply.
     handsFree: { enabled: false, pauseWhileBusy: true },
     recorder: { engine: 'auto', device: '' },
+  },
+
+  // Looking at the screen. Gives the model one tool — `look` — that takes a
+  // screenshot, shows it to the model, and deletes it. That is the whole of
+  // it: nothing is written anywhere that outlives the answer.
+  //
+  // 'auto' picks the first backend that works here: the GNOME Shell D-Bus
+  // method, then grim, gnome-screenshot, spectacle, maim, scrot, import. On
+  // Wayland the shell's own method is usually the only one permitted.
+  // `command` ({{file}}) skips detection entirely.
+  //
+  // maxPixels caps the long edge before the image is sent — a 4K screenshot
+  // is resized by the model anyway, so sending it whole only costs waiting.
+  // enabled: false removes the tool, and with it any way for Jarvis to see.
+  // ask: true prompts before every look. Off by default — being asked to
+  // approve a screenshot right after saying "what's on my screen" is friction
+  // for no gain — but a screenshot takes in whatever happens to be there, so
+  // it is a decision worth being able to reverse.
+  screen: {
+    enabled: true,
+    ask: false,
+    engine: 'auto',
+    shrinker: 'auto',
+    command: '',
+    maxPixels: 1568,
+    timeoutMs: 15000,
   },
 
   // Shell tasks Jarvis can run for you. Each becomes a tool the model can call
