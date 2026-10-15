@@ -219,6 +219,7 @@ export function attachLedger(session, config) {
   const root = here?.path ?? config.cwd;
   const project = here?.name ?? '';
   const pending = new Map();
+  let noted = '';                               // the session already written down
 
   prune(settings.keepDays ?? 30);
 
@@ -235,6 +236,11 @@ export function attachLedger(session, config) {
   const onEvent = (event) => {
     switch (event.kind) {
       case 'init':
+        // The SDK announces itself more than once in a long conversation,
+        // with the same id each time. One line per session, not per
+        // announcement.
+        if (event.sessionId && event.sessionId === noted) return;
+        noted = event.sessionId ?? '';
         write({ kind: 'session', sessionId: event.sessionId, model: event.model, cwd: tidyPath(config.cwd) });
         return;
 

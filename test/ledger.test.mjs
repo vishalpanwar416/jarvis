@@ -85,6 +85,27 @@ test('a turn is written down as it happens', () => {
   assert.ok(entries.every((e) => Date.parse(e.at)), 'and when');
 });
 
+test('a session announced twice is written down once', () => {
+  // The SDK re-announces itself during a long conversation, same id each
+  // time; a line per announcement would bury the work in session rows.
+  const entries = run([
+    { kind: 'init', sessionId: 's1', model: 'claude-opus-5' },
+    { kind: 'submitted', text: 'first question' },
+    { kind: 'init', sessionId: 's1', model: 'claude-opus-5' },
+    { kind: 'submitted', text: 'second question' },
+  ]);
+  assert.equal(entries.filter((e) => e.kind === 'session').length, 1);
+  assert.equal(entries.filter((e) => e.kind === 'ask').length, 2, 'the questions are all still there');
+});
+
+test('a genuinely new session is a new line', () => {
+  const entries = run([
+    { kind: 'init', sessionId: 's1' },
+    { kind: 'init', sessionId: 's2' },
+  ]);
+  assert.deepEqual(entries.map((e) => e.sessionId), ['s1', 's2']);
+});
+
 test('a tool that failed is not recorded as work done', () => {
   const [edit] = run([
     { kind: 'tool-start', id: 't1', name: 'Write', input: { file_path: path.join(project, 'a.js') } },
