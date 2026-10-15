@@ -69,6 +69,7 @@ src/
   memory-tools.js     remember / forget / projects, as tools
   ledger.js           what was actually done, written down as it happens
   working-set.js      where the work is, said once at the top of a session
+  recall.js           BM25 over all of it, for the rest that will not fit
   autopilot.js        the "yes to everything" mode
   local.js            the Ollama proxy behind --local
   summarize.js        a tool call in a few words
@@ -83,8 +84,8 @@ src/
     AwarenessPanel.jsx / StatusBar.jsx / Banner.jsx / PermissionPrompt.jsx
     markdown.jsx      the small markdown renderer
     theme.js          theme context
-test/                 npm test — memory, the ledger, the working set, the serve
-                      protocol, voice, screen, commands
+test/                 npm test — memory, the ledger, the working set, recall,
+                      the serve protocol, voice, screen, commands
 themes/               midnight · amber · mono
 ```
 
@@ -350,6 +351,54 @@ tokens, keys and passwords *before* they are written, not when they are read;
 the whole thing off, with nothing else in Jarvis depending on it. The files are
 newline-delimited JSON — `cat ~/.jarvis/memory/ledger/*.jsonl` is the whole
 story of what is kept.
+
+### Reaching the rest of it
+
+The block at the top of a session is capped — it is paid for on every turn —
+so most of what Jarvis knows is necessarily outside it. Recall is how a
+question gets at the rest. It searches the notes, the ledger and the project
+index with BM25, which is lexical: no model, no network, no embeddings and no
+index to rebuild, about three milliseconds.
+
+It runs two ways. The model can call `recall` as a tool when it thinks
+something was decided or done before. And every question you type is looked up
+automatically, with anything found riding along with that message:
+
+```
+[recalled] Possibly relevant, from what was already known. Some of it will not be —
+use what fits the question and ignore the rest; do not mention having been handed it.
+- [2026-09-20] (sanero-website) Production deploys go out through Vercel; live domain is sanero.in
+- sanero-next — ~/Development/Aarambh/sanero-next — Sanero Media — website (Next.js)
+```
+
+It rides with the message rather than going into the system prompt on purpose.
+What is worth retrieving changes with every question; the system prompt is
+fixed when the session opens and is the part that gets cached. Rewriting it
+each turn to inject context would cost more than the context is worth.
+
+Most turns it finds nothing and says nothing, which is the intent. Three gates
+decide that, and all three are free of any absolute score threshold — BM25
+scores depend on how big the store is, so a fixed cutoff is a number that
+quietly stops working as it fills up. A hit has to be worth a third of the
+best hit, account for at least a third of the question by weight, and have
+matched something distinctive rather than a word half the store contains. The
+less of your question is findable at all, the higher that last bar goes.
+
+Messages that are purely acknowledgements — "go ahead", "ok thanks", "carry
+on" — are skipped outright. That is a list, not a score: "go ahead" and "deploy
+sanero" are the same shape to any scoring function, and the difference is that
+an acknowledgement refers to the turn before it, which the model already has.
+
+```json
+"recall": { "enabled": true, "limit": 5, "maxChars": 600, "days": 30 }
+```
+
+**On embeddings.** There are none here, deliberately. A few hundred notes and a
+few thousand ledger lines is not a corpus where vector search wins: BM25 is
+exact about filenames and identifiers, which is most of what gets looked up,
+and it costs nothing to keep current. The case for embeddings starts when the
+thing being searched is project source rather than memory — a different
+feature, and `Grep` already covers much of it.
 
 ## Awareness
 

@@ -120,7 +120,7 @@ export default function App({ config: initialConfig, resume }) {
     return new JarvisSession({
       config: initialConfig,
       mcpServers: {
-        memory: buildMemoryServer(),
+        memory: buildMemoryServer(initialConfig),
         ...(screenServer ? { screen: screenServer } : {}),
         ...(automationServer ? { automations: automationServer } : {}),
       },
@@ -255,7 +255,11 @@ export default function App({ config: initialConfig, resume }) {
       // The command the person typed is already in the transcript, so this
       // sends without putting a second line there saying the same thing.
       ask: (text) =>
-        session.send(framePrompt(text, { autopilot: autopilot && !initialConfig.autopilot, voice: voiceOut })),
+        session.send(framePrompt(text, {
+          autopilot: autopilot && !initialConfig.autopilot,
+          voice: voiceOut,
+          config,
+        })),
       pick: (request) => setPicker(request),
       setAutopilot,
       clear: () => {
@@ -291,10 +295,13 @@ export default function App({ config: initialConfig, resume }) {
         framePrompt(text, {
           autopilot: autopilot && !initialConfig.autopilot,
           voice: voiceOut,
+          // What is worth recalling depends on the question, so it is
+          // looked up here rather than baked into the system prompt.
+          config,
         }),
       );
     },
-    [api, push, session, autopilot, initialConfig.autopilot, voiceOut],
+    [api, push, session, autopilot, initialConfig.autopilot, voiceOut, config],
   );
 
   // What was already in the composer when dictation started, kept so the

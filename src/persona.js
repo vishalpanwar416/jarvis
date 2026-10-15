@@ -3,6 +3,7 @@
 import { autopilotPersona, autopilotPrefix } from './autopilot.js';
 import { memoryBlock } from './memory.js';
 import { workingSetBlock } from './working-set.js';
+import { recallBlock } from './recall.js';
 
 export function buildPersona(config) {
   const { name, address, traits, style, rules } = config.persona;
@@ -100,7 +101,19 @@ export function voicePrefix() {
 //
 // All three front ends (the terminal UI, one-shot, serve) come through here,
 // so none of them can quietly grow its own idea of the wording.
-export function framePrompt(text, { autopilot = false, voice = false } = {}) {
-  const prefixes = [autopilot ? autopilotPrefix() : '', voice ? voicePrefix() : ''].filter(Boolean);
+//
+// Recall rides here too, and deliberately not in the system prompt. What is
+// worth retrieving changes with every question; the system prompt is fixed
+// when the session opens and is the part that gets cached. Rewriting it per
+// turn to inject context would cost more than the context is worth.
+//
+// Without a config there is nothing to search, so framePrompt(text) alone
+// still returns exactly what it was given.
+export function framePrompt(text, { autopilot = false, voice = false, config = null } = {}) {
+  const prefixes = [
+    autopilot ? autopilotPrefix() : '',
+    voice ? voicePrefix() : '',
+    config ? recallBlock(text, config) : '',
+  ].filter(Boolean);
   return prefixes.length ? `${prefixes.join('\n\n')}\n\n${text}` : text;
 }

@@ -154,6 +154,23 @@ export const DEFAULTS = {
     maxEntryChars: 240,
   },
 
+  // Reaching the rest of what is known. The block at the top of a session
+  // is capped, so most of memory necessarily sits outside it; recall is how
+  // a question gets at the rest. It searches the notes, the ledger and the
+  // project index with BM25 — lexical, local, no model and no index to
+  // rebuild — and rides along with the question rather than going into the
+  // system prompt, which is the part that gets cached.
+  //
+  // The model can also call it as a tool. Automatic recall stays quiet on
+  // anything shorter than two content words, so "yes" and "go on" do not
+  // drag five lines of history behind them.
+  recall: {
+    enabled: true,
+    limit: 5,
+    maxChars: 600,
+    days: 30,
+  },
+
   // Shell tasks Jarvis can run for you. Each becomes a tool the model can call
   // AND a `/run <name>` command. {{arg}} placeholders are shell-quoted.
   automations: [],

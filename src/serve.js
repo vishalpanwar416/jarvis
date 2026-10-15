@@ -76,7 +76,7 @@ export async function serve({
   const screenServer = buildScreenServer(config);
   const unaskedScreen = screenToolsAllowedUnasked(config);
   const mcpServers = {
-    memory: buildMemoryServer(),
+    memory: buildMemoryServer(config),
     ...(screenServer ? { screen: screenServer } : {}),
     ...(automationServer ? { automations: automationServer } : {}),
   };
@@ -275,7 +275,7 @@ export async function serve({
         const voice = Boolean(message.voice);
         current = { id, text: '', thinking: '', resume: message.resume || null, inited: false, voice };
         s.used = true;
-        s.send(framePrompt(prompt, { voice }));
+        s.send(framePrompt(prompt, { voice, config }));
         break;
       }
       case 'permit': {

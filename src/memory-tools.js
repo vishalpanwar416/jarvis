@@ -7,10 +7,11 @@ import { z } from 'zod';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { remember, forget, loadIndex, findProjects, KINDS } from './memory.js';
 import { forgetEntries } from './ledger.js';
+import { search } from './recall.js';
 
 const text = (body, isError = false) => ({ content: [{ type: 'text', text: body }], isError });
 
-export function buildMemoryServer() {
+export function buildMemoryServer(config = {}) {
   const tools = [
     tool(
       'remember',
@@ -53,6 +54,24 @@ export function buildMemoryServer() {
         return text(`Forgot ${said.join(' and ')}.`);
       },
       { annotations: { readOnlyHint: false } },
+    ),
+
+    tool(
+      'recall',
+      'Search everything already known — the notes, the record of past work, and the projects ' +
+      'on this machine — for whatever bears on a question. Use it when something was probably ' +
+      'decided, learned or done before and is not in front of you: before asking them to repeat ' +
+      'themselves, and before concluding that something was never done.',
+      {
+        query: z.string().describe('What to look for, in the words you would use for it'),
+        limit: z.number().optional().describe('How many to bring back (default 5)'),
+      },
+      async ({ query, limit }) => {
+        const hits = search(query, { config, limit: limit ?? 5 });
+        if (!hits.length) return text(`Nothing known bears on "${query}".`);
+        return text([`${hits.length} of them:`, ...hits.map((hit) => `- ${hit.line}`)].join('\n'));
+      },
+      { annotations: { readOnlyHint: true } },
     ),
 
     tool(
@@ -102,4 +121,5 @@ export const MEMORY_TOOLS = [
   'mcp__memory__remember',
   'mcp__memory__forget',
   'mcp__memory__projects',
+  'mcp__memory__recall',
 ];

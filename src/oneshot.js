@@ -45,7 +45,7 @@ export async function runOnce(prompt, { config, resume, yes = false, quiet = fal
     // answer questions.
     config: { ...config, permissionMode: yes && !config.autopilot ? 'bypassPermissions' : config.permissionMode },
     mcpServers: {
-      memory: buildMemoryServer(),
+      memory: buildMemoryServer(config),
       ...(screenServer ? { screen: screenServer } : {}),
       ...(automationServer ? { automations: automationServer } : {}),
     },
@@ -151,6 +151,6 @@ export async function runOnce(prompt, { config, resume, yes = false, quiet = fal
     session.start();
     // --voice means this answer is heard, not read. Ask for one that is
     // worth hearing rather than stripping the markdown off one that isn't.
-    session.send(framePrompt(prompt, { voice: spoken }));
+    session.send(framePrompt(prompt, { voice: spoken, config }));
   });
 }
