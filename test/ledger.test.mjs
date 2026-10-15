@@ -17,9 +17,12 @@ process.env.HOME = home;
 const ledger = await import('../src/ledger.js');
 
 const project = path.join(home, 'Development', 'alpha');
+const other = path.join(home, 'Development', 'beta');
 before(() => {
-  fs.mkdirSync(project, { recursive: true });
-  fs.writeFileSync(path.join(project, 'package.json'), JSON.stringify({ name: 'alpha' }));
+  for (const dir of [project, other]) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: path.basename(dir) }));
+  }
 });
 beforeEach(() => {
   fs.rmSync(ledger.LEDGER_DIR, { recursive: true, force: true });
@@ -124,6 +127,113 @@ test('a tool with no result still gets written when the turn ends', () => {
   const run1 = entries.find((e) => e.kind === 'run');
   assert.equal(run1.command, 'sleep 60');
   assert.equal(run1.failed, undefined, 'unknown is not the same as failed');
+});
+
+// ---- where the work was, when the working directory does not say ----
+//
+// Run from a home directory — which is where it mostly is run from —
+// there is no project in the path. What the turn touches says instead.
+
+// Home itself is no project, so nothing can be read off the path.
+const adrift = (patch = {}) => ({ cwd: home, ledger: { enabled: true, ...patch } });
+const inside = (dir, rel) => path.join(dir, rel);
+
+test('a turn is tagged with the project it turned out to touch', () => {
+  const entries = run([
+    { kind: 'submitted', text: 'fix the alpha tests' },
+    { kind: 'tool-start', id: 't1', name: 'Edit', input: { file_path: inside(project, 'src/a.js') } },
+    { kind: 'tool-end', id: 't1', isError: false },
+    { kind: 'result', text: 'Fixed.' },
+  ], adrift());
+  assert.ok(entries.length >= 3);
+  assert.ok(entries.every((e) => e.project === 'alpha'),
+    'the question included, which is the entry most worth having tagged');
+  assert.equal(entries.find((e) => e.kind === 'edit').file, 'src/a.js', 'relative to the project it found');
+});
+
+test('a file merely read says as much as one written', () => {
+  const entries = run([
+    { kind: 'submitted', text: 'what does this do' },
+    // A Read is never recorded, but it still names the project.
+    { kind: 'tool-start', id: 't1', name: 'Read', input: { file_path: inside(other, 'main.js') } },
+    { kind: 'tool-end', id: 't1', isError: false },
+    { kind: 'result', text: 'It schedules things.' },
+  ], adrift());
+  assert.ok(entries.every((e) => e.project === 'beta'));
+  assert.ok(!entries.some((e) => e.kind === 'edit'), 'and is still not recorded as work');
+});
+
+test('a turn that touches nothing is tagged with nothing', () => {
+  const entries = run([
+    { kind: 'submitted', text: 'what is the time' },
+    { kind: 'result', text: 'Half past four.' },
+  ], adrift());
+  assert.ok(entries.length);
+  assert.ok(entries.every((e) => e.project === ''), 'rather than being guessed at');
+});
+
+test('the next turn can be about somewhere else', () => {
+  const session = new EventEmitter();
+  ledger.attachLedger(session, adrift());
+  const emit = (...events) => { for (const e of events) session.emit('event', e); };
+
+  emit({ kind: 'submitted', text: 'first' },
+       { kind: 'tool-start', id: 'a', name: 'Edit', input: { file_path: inside(project, 'x.js') } },
+       { kind: 'tool-end', id: 'a', isError: false },
+       { kind: 'result', text: 'done' });
+  emit({ kind: 'submitted', text: 'second' },
+       { kind: 'tool-start', id: 'b', name: 'Edit', input: { file_path: inside(other, 'y.js') } },
+       { kind: 'tool-end', id: 'b', isError: false },
+       { kind: 'result', text: 'done' });
+
+  const asks = ledger.readEntries({ days: 1 }).filter((e) => e.kind === 'ask');
+  assert.deepEqual(asks.map((e) => [e.text, e.project]), [['first', 'alpha'], ['second', 'beta']]);
+});
+
+test('a turn that touches nothing stays with the last one that did', () => {
+  const session = new EventEmitter();
+  ledger.attachLedger(session, adrift());
+  const emit = (...events) => { for (const e of events) session.emit('event', e); };
+
+  emit({ kind: 'submitted', text: 'first' },
+       { kind: 'tool-start', id: 'a', name: 'Edit', input: { file_path: inside(project, 'x.js') } },
+       { kind: 'tool-end', id: 'a', isError: false },
+       { kind: 'result', text: 'done' });
+  emit({ kind: 'submitted', text: 'and why is that' }, { kind: 'result', text: 'because' });
+
+  const asks = ledger.readEntries({ days: 1 }).filter((e) => e.kind === 'ask');
+  assert.deepEqual(asks.map((e) => e.project), ['alpha', 'alpha'],
+    'a follow-up is about whatever the turn before it was about');
+});
+
+test('nothing is written until the turn says what it was about', () => {
+  const session = new EventEmitter();
+  ledger.attachLedger(session, adrift());
+  session.emit('event', { kind: 'submitted', text: 'fix the alpha tests' });
+  assert.deepEqual(ledger.readEntries({ days: 1 }), [],
+    'writing it immediately would mean writing it untagged');
+  session.emit('event', { kind: 'result', text: 'done' });
+  assert.ok(ledger.readEntries({ days: 1 }).length, 'and then it lands');
+});
+
+test('an unfinished turn is still written when the session closes', () => {
+  const entries = run([
+    { kind: 'submitted', text: 'start something long' },
+    { kind: 'tool-start', id: 't1', name: 'Bash', input: { command: 'sleep 60' } },
+    { kind: 'closed' },
+  ], adrift());
+  assert.ok(entries.some((e) => e.kind === 'ask'), 'an interrupted turn is not a lost one');
+});
+
+test('a working directory inside a project still settles it outright', () => {
+  const entries = run([
+    { kind: 'submitted', text: 'look at the other one' },
+    // Touching beta from inside alpha does not move the work to beta.
+    { kind: 'tool-start', id: 't1', name: 'Read', input: { file_path: inside(other, 'main.js') } },
+    { kind: 'tool-end', id: 't1', isError: false },
+  ], config());
+  assert.ok(entries.every((e) => e.project === 'alpha'), 'cwd was chosen deliberately and cannot be wrong');
+  assert.ok(entries.length, 'and is written as it happens, not held back');
 });
 
 test('reads and writes are beneath notice', () => {

@@ -215,16 +215,68 @@ export function attachLedger(session, config) {
   if (settings.enabled === false) return () => {};
 
   const maxChars = settings.maxEntryChars ?? 240;
-  const here = projectAt(config.cwd);
-  const root = here?.path ?? config.cwd;
-  const project = here?.name ?? '';
+  const cwd = config.cwd;
+  const here = projectAt(cwd);
+
+  // Which project the work is in, in order of how much the answer is worth
+  // trusting. A working directory inside a project settles it outright —
+  // it was chosen deliberately and cannot be wrong.
+  //
+  // Run from somewhere that is no project — a home directory, most often,
+  // which is where this actually gets run from — there is nothing to read
+  // off the path, and the old answer was to tag the work with nothing at
+  // all. But a turn that edits a file says perfectly clearly what it is
+  // about. So those entries wait until the turn ends and are stamped with
+  // whatever the turn turned out to touch.
+  //
+  // That waiting is why this is not simply done at write time: the
+  // question is recorded before the first tool call, and the question is
+  // the entry most worth having tagged.
+  const fixed = here?.name ?? '';
+  let root = here?.path ?? cwd;
+  let turn = '';                                // what this turn's paths say
+  let learned = '';                             // what an earlier turn's said
+  const held = [];                              // waiting to be told where they happened
   const pending = new Map();
   let noted = '';                               // the session already written down
 
   prune(settings.keepDays ?? 30);
 
   const clip = (text) => String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, maxChars);
-  const write = (entry) => append({ project, ...entry });
+
+  const write = (entry) => {
+    // Stamped now even when it is written later, so the record stays in
+    // the order things happened rather than the order they were resolved.
+    const stamped = { at: new Date().toISOString(), ...entry };
+    if (fixed) return append({ project: fixed, ...stamped });
+    held.push(stamped);
+    return null;
+  };
+
+  // The turn is over and whatever it was going to touch, it has touched.
+  const settle = () => {
+    const project = turn || learned;
+    if (project) learned = project;             // carried to a turn that touches nothing
+    for (const entry of held) append({ project, ...entry });
+    held.length = 0;
+    turn = '';
+  };
+
+  // Any path the turn mentions, whether or not it is worth recording. A
+  // Read is not work and never becomes an entry, but it says as plainly as
+  // an Edit does which project is being talked about.
+  const observe = (input) => {
+    if (fixed || turn) return;                  // settled, or already answered
+    for (const key of ['file_path', 'notebook_path', 'path']) {
+      const value = input?.[key];
+      if (typeof value !== 'string' || !value.trim()) continue;
+      const found = projectAt(path.resolve(cwd, value));
+      if (!found) continue;
+      turn = found.name;
+      root = found.path;
+      return;                                   // the first one named wins
+    }
+  };
 
   const flush = (id, failed) => {
     const held = pending.get(id);
@@ -245,6 +297,7 @@ export function attachLedger(session, config) {
         return;
 
       case 'submitted': {
+        turn = '';                              // a new question, asked afresh
         // The turn framing (autopilot, voice) is prepended to the message and
         // is not what was asked. Keep the last paragraph, which is.
         const text = clip(String(event.text ?? '').split('\n\n').pop());
@@ -253,6 +306,7 @@ export function attachLedger(session, config) {
       }
 
       case 'tool-start': {
+        observe(event.input);
         if (!WATCHED.has(event.name)) return;
         if (EDIT_TOOLS.has(event.name)) {
           const file = tidyPath(event.input?.file_path ?? event.input?.notebook_path ?? '', root);
@@ -272,11 +326,13 @@ export function attachLedger(session, config) {
         for (const id of [...pending.keys()]) flush(id);
         const text = clip(String(event.text ?? '').split('\n').find((l) => l.trim()) ?? '');
         if (text) write({ kind: 'answer', text, error: event.isError || undefined });
+        settle();
         return;
       }
 
       case 'closed':
         for (const id of [...pending.keys()]) flush(id);
+        settle();
         return;
 
       default:

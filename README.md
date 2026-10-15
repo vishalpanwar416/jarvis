@@ -313,7 +313,13 @@ tool call away.
 
 **A ledger** — `~/.jarvis/memory/ledger/YYYY-MM-DD.jsonl`. The record of what
 was actually done: a line per question asked, answer given, file changed and
-command run, tagged with the project it happened in. It is folded out of the
+command run, tagged with the project it happened in. When you launch from
+inside a project that settles it; launched from a home directory, which is
+how it mostly gets launched, the tag comes from the files the turn touches —
+so a turn spent reading `~/Development/thing/src` is filed under `thing`
+wherever it was started from. Those entries wait until the turn ends, because
+the question is recorded before the first tool call and the question is the
+line most worth having tagged. It is folded out of the
 events the session already emits, so it costs no model call and no prompt
 space. This is the part that makes a conversation able to open knowing what
 the last one was about.
@@ -334,6 +340,16 @@ Where this conversation is happening, as of 2026-10-15 07:14:
 Everything in it is derived, so none of it can be stale the way a note can be:
 if the branch changed, it says the new branch. It costs about 20ms and 350
 characters.
+
+Started somewhere that is no project, it says so and then names wherever the
+recent work was instead, rather than going blank:
+
+```
+- in ~, which is not inside a project
+- the work lately has been in jarvis — ~/Development/Aarambh/jarvis — A hackable…
+- git: main · 4 uncommitted — last commit "One ledger line per session…"
+- last asked in jarvis: "commit and push it"
+```
 
 ```json
 "ledger": {

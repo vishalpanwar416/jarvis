@@ -89,7 +89,7 @@ test('it reports what was done here, and what was last asked', () => {
   const block = workingSetBlock(config(alpha));
   assert.match(block, /2 file edits, 1 command \(1 failed\)/);
   assert.match(block, /last touched src\/serve\.js, src\/voice\.js/, 'most recent first');
-  assert.match(block, /last asked here: "now commit it"/);
+  assert.match(block, /last asked in alpha: "now commit it"/);
 });
 
 test('work done elsewhere today is named but not described', () => {
@@ -104,15 +104,32 @@ test('another project\'s work is never reported as this one\'s', () => {
   ledger.append({ kind: 'ask', text: 'a question about bezelrig', project: 'bezelrig' });
   ledger.append({ kind: 'edit', file: 'main.py', project: 'bezelrig' });
   const block = workingSetBlock(config(alpha));
-  assert.ok(!block.includes('last asked here'), 'nothing was asked here');
+  assert.ok(!block.includes('last asked in'), 'nothing was asked here');
   assert.ok(!block.includes('main.py'), 'and nothing was edited here');
 });
 
-test('outside a project it does not claim to be in one', () => {
-  ledger.append({ kind: 'ask', text: 'a question', project: 'alpha' });
+test('outside a project, the recent work says where we are', () => {
+  // Running from a home directory is the ordinary case, and the working
+  // directory has nothing to say about it. What was worked on does.
+  ledger.append({ kind: 'ask', text: 'fix the alpha deploy', project: 'alpha' });
+  ledger.append({ kind: 'edit', file: 'src/deploy.js', project: 'alpha' });
   const block = workingSetBlock(config(loose));
-  assert.match(block, /in ~\/notes, which is not inside a project/);
-  assert.ok(!block.includes('last asked here'), 'an unscoped "here" would be a lie');
+  assert.match(block, /in ~\/notes, which is not inside a project/, 'honest about the directory');
+  assert.match(block, /the work lately has been in alpha — ~\/Development\/alpha/);
+  assert.match(block, /last asked in alpha: "fix the alpha deploy"/);
+});
+
+test('a project the index has not seen is still named', () => {
+  ledger.append({ kind: 'ask', text: 'something', project: 'somewhere-unindexed' });
+  const block = workingSetBlock(config(loose));
+  assert.match(block, /the work lately has been in somewhere-unindexed$/m,
+    'the name is most of what orientation needs; the path is not known');
+});
+
+test('with no work recorded anywhere, it claims nothing', () => {
+  const block = workingSetBlock(config(loose));
+  assert.ok(!block.includes('the work lately'), 'there is nothing to infer from');
+  assert.ok(!block.includes('last asked in'), 'an unscoped read would answer with somebody else\'s work');
 });
 
 test('with nothing to say it says nothing', () => {
