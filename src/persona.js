@@ -2,6 +2,7 @@
 // We append rather than replace so all of Claude Code's tool know-how survives.
 import { autopilotPersona, autopilotPrefix } from './autopilot.js';
 import { memoryBlock } from './memory.js';
+import { workingSetBlock } from './working-set.js';
 
 export function buildPersona(config) {
   const { name, address, traits, style, rules } = config.persona;
@@ -26,10 +27,18 @@ export function buildPersona(config) {
   if (config.autopilot) lines.push('', autopilotPersona());
   if (config.askFirst) lines.push('', askFirstPersona());
 
-  // What is already known, so a named project does not have to be hunted
-  // for and a preference does not have to be stated twice.
-  const known = config.memory === false ? '' : memoryBlock();
-  if (known) lines.push('', known);
+  if (config.memory !== false) {
+    // Where the work is, before what is known about it. The smallest and
+    // most specific thing goes first because it is the thing most likely to
+    // be what the next question is about.
+    const now = workingSetBlock(config);
+    if (now) lines.push('', now);
+
+    // What is already known, so a named project does not have to be hunted
+    // for and a preference does not have to be stated twice.
+    const known = memoryBlock();
+    if (known) lines.push('', known);
+  }
 
   return lines.join('\n');
 }

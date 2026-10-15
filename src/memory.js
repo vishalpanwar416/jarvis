@@ -176,6 +176,22 @@ export function findProject(name) {
   return findProjects(name)[0] ?? null;
 }
 
+// Which project a directory is *in*, which is a different question from
+// which project is called something. Walks up until a marker turns up, so
+// src/ui inside a repo answers with the repo rather than with nothing.
+//
+// Independent of the index on purpose: the working directory is known to be
+// real, and waiting on a disk scan to name it would be the slow way round.
+export function projectAt(dir) {
+  let current = path.resolve(String(dir ?? '.'));
+  for (;;) {
+    if (isProject(current)) return { name: path.basename(current), path: current };
+    const parent = path.dirname(current);
+    if (parent === current) return null;        // reached /
+    current = parent;
+  }
+}
+
 // ---- notes ----
 
 export function loadNotes() {

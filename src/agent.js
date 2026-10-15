@@ -10,6 +10,7 @@
 import { EventEmitter } from 'node:events';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { buildPersona } from './persona.js';
+import { attachLedger } from './ledger.js';
 
 // Tools listed in config.allowedTools never prompt. This is checked inside our
 // own permission callback rather than handed to the SDK's `allowedTools`,
@@ -124,6 +125,10 @@ export class JarvisSession extends EventEmitter {
 
   start() {
     this.#query = query({ prompt: this.#input(), options: this.options() });
+    // Recorded here rather than in each front end, so the terminal UI,
+    // one-shot and --serve cannot drift into three different ideas of what
+    // is worth writing down. It only listens; nothing below is aware of it.
+    attachLedger(this, this.config);
     this.#consume();
     return this;
   }

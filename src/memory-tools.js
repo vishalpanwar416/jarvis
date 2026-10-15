@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { remember, forget, loadIndex, findProjects } from './memory.js';
+import { forgetEntries } from './ledger.js';
 
 const text = (body, isError = false) => ({ content: [{ type: 'text', text: body }], isError });
 
@@ -29,12 +30,21 @@ export function buildMemoryServer() {
 
     tool(
       'forget',
-      'Drop remembered notes containing some text. Use when something learned turns out to ' +
-      'be wrong or has gone out of date.',
-      { match: z.string().describe('Text the notes to drop contain') },
+      'Drop everything remembered that mentions some text — both the notes and the record ' +
+      'of the work. Use when something learned turns out to be wrong, has gone out of date, ' +
+      'or should not have been written down.',
+      { match: z.string().describe('Text the notes and entries to drop contain') },
       async ({ match }) => {
-        const gone = forget(match);
-        return text(gone ? `Forgot ${gone} note${gone === 1 ? '' : 's'}.` : 'No note matched that.');
+        // Both stores, because a fact struck from the notes while the work
+        // that produced it stays on the record has not really been forgotten.
+        const notes = forget(match);
+        const entries = forgetEntries(match);
+        if (!notes && !entries) return text('Nothing remembered matched that.');
+        const said = [
+          notes ? `${notes} note${notes === 1 ? '' : 's'}` : '',
+          entries ? `${entries} ledger entr${entries === 1 ? 'y' : 'ies'}` : '',
+        ].filter(Boolean);
+        return text(`Forgot ${said.join(' and ')}.`);
       },
       { annotations: { readOnlyHint: false } },
     ),

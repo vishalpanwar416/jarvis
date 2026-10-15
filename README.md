@@ -67,6 +67,8 @@ src/
   serve.js            the resident JSON-line protocol (--serve)
   memory.js           what it knows between conversations
   memory-tools.js     remember / forget / projects, as tools
+  ledger.js           what was actually done, written down as it happens
+  working-set.js      where the work is, said once at the top of a session
   autopilot.js        the "yes to everything" mode
   local.js            the Ollama proxy behind --local
   summarize.js        a tool call in a few words
@@ -81,7 +83,8 @@ src/
     AwarenessPanel.jsx / StatusBar.jsx / Banner.jsx / PermissionPrompt.jsx
     markdown.jsx      the small markdown renderer
     theme.js          theme context
-test/                 npm test — memory, the serve protocol, voice, screen, commands
+test/                 npm test — memory, the ledger, the working set, the serve
+                      protocol, voice, screen, commands
 themes/               midnight · amber · mono
 ```
 
@@ -275,6 +278,62 @@ with spaces stay one argument:
   ]
 }
 ```
+
+## What it remembers
+
+Four things, kept apart because they go stale differently.
+
+**Notes** — `~/.jarvis/memory/notes.md`. One line each, written by the model
+through its `remember` tool when something would save a question next time: a
+decision, a preference, how a project deploys. The newest fill a budget at the
+top of every session; `forget` drops any that mention a given word.
+
+**A project index** — `~/.jarvis/memory/projects.json`, rebuilt by looking
+rather than by being told. Walks `~/Development` for project markers, so naming
+a project resolves to a path without anyone having written that path down. The
+handful touched most recently are named up front; the rest are a `projects`
+tool call away.
+
+**A ledger** — `~/.jarvis/memory/ledger/YYYY-MM-DD.jsonl`. The record of what
+was actually done: a line per question asked, answer given, file changed and
+command run, tagged with the project it happened in. It is folded out of the
+events the session already emits, so it costs no model call and no prompt
+space. This is the part that makes a conversation able to open knowing what
+the last one was about.
+
+**A working set** — not stored at all. Computed when a session opens, from the
+working directory, the repo, and the last few days of ledger:
+
+```
+Where this conversation is happening, as of 2026-10-15 07:14:
+- in jarvis — ~/Development/Aarambh/jarvis — A hackable terminal assistant…
+- git: main · 8 uncommitted — last commit "Memory, screen sight, a resident mode…"
+- here over the last 5 days: 12 file edits, 4 commands (1 failed); last touched
+  src/serve.js, src/voice.js, README.md
+- last asked here: "commit and push it"
+- also worked in today: bezelrig
+```
+
+Everything in it is derived, so none of it can be stale the way a note can be:
+if the branch changed, it says the new branch. It costs about 20ms and 350
+characters.
+
+```json
+"ledger": {
+  "enabled": true,
+  "keepDays": 30,
+  "recentDays": 5,
+  "maxEntryChars": 240
+}
+```
+
+An automatic recorder is worth being careful with, so: `keepDays` is a horizon
+and anything past it is deleted when a session opens; commands are stripped of
+tokens, keys and passwords *before* they are written, not when they are read;
+`forget` reaches the ledger as well as the notes; and `enabled: false` turns
+the whole thing off, with nothing else in Jarvis depending on it. The files are
+newline-delimited JSON — `cat ~/.jarvis/memory/ledger/*.jsonl` is the whole
+story of what is kept.
 
 ## Awareness
 

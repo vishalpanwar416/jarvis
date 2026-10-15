@@ -136,6 +136,24 @@ export const DEFAULTS = {
     timeoutMs: 15000,
   },
 
+  // The record of what was actually done: a line per question asked, answer
+  // given, file changed and command run, folded out of the session's own
+  // events into ~/.jarvis/memory/ledger/. No model call and no prompt cost —
+  // it is written as work happens and read back by src/working-set.js, which
+  // is what lets a conversation open knowing what the last one was about.
+  //
+  // keepDays is a horizon, not a cap: anything older is deleted when a
+  // session opens. recentDays is how far back the opening summary looks.
+  // Commands are redacted for tokens, keys and passwords before they are
+  // written, but a command log is still a log — enabled: false turns the
+  // whole thing off, and nothing else in Jarvis depends on it.
+  ledger: {
+    enabled: true,
+    keepDays: 30,
+    recentDays: 5,
+    maxEntryChars: 240,
+  },
+
   // Shell tasks Jarvis can run for you. Each becomes a tool the model can call
   // AND a `/run <name>` command. {{arg}} placeholders are shell-quoted.
   automations: [],
